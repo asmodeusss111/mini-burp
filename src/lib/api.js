@@ -68,6 +68,14 @@ export async function sendRequest(payload, local) {
   return { status: 200, headers: {}, body: r?.contents || "", url: payload.url };
 }
 
+export async function whoisLookup(domain) {
+  try {
+    const r = await fetch(`/whois?domain=${encodeURIComponent(domain)}`).then(r => r.json()).catch(() => null);
+    if (!r || r.error) return null;
+    try { return JSON.parse(r.body); } catch { return null; }
+  } catch { return null; }
+}
+
 export const dnsQ = (name, type) =>
   fetch(`https://dns.google/resolve?name=${encodeURIComponent(name)}&type=${type}`)
     .then(r => r.json())

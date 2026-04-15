@@ -7,6 +7,7 @@ import RepeaterTab from "./tabs/RepeaterTab.jsx";
 import FuzzerTab from "./tabs/FuzzerTab.jsx";
 import InterceptorTab from "./tabs/InterceptorTab.jsx";
 import DecoderTab from "./tabs/DecoderTab.jsx";
+import HistoryTab from "./tabs/HistoryTab.jsx";
 
 const TABS = [
   { id: "scanner",     label: "Scanner",     icon: "⚡" },
@@ -14,6 +15,7 @@ const TABS = [
   { id: "fuzzer",      label: "Fuzzer",      icon: "⚔" },
   { id: "interceptor", label: "Interceptor", icon: "◈" },
   { id: "decoder",     label: "Decoder",     icon: "⇄" },
+  { id: "history",     label: "History",     icon: "🕐" },
 ];
 
 export default function App() {
@@ -93,6 +95,7 @@ export default function App() {
         <div style={{ display: tab === "fuzzer"      ? "block" : "none", padding: 10, height: "100%" }}><FuzzerTab      proxyOnline={proxyOnline} /></div>
         <div style={{ display: tab === "interceptor" ? "block" : "none", padding: 10, height: "100%" }}><InterceptorTab proxyOnline={proxyOnline} /></div>
         <div style={{ display: tab === "decoder"     ? "block" : "none", padding: 10, height: "100%" }}><DecoderTab /></div>
+        <div style={{ display: tab === "history"     ? "block" : "none", padding: 10, height: "100%" }}><HistoryTab /></div>
       </div>
 
       {/* Status bar */}

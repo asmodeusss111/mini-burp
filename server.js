@@ -301,6 +301,46 @@ http.createServer(async (req, res) => {
     return;
   }
 
+  // GET /history?type=all|scans|proxy|fuzz&limit=50
+  if (path === "/history") {
+    const type  = parsed.searchParams.get("type") || "all";
+    const limit = Math.min(parseInt(parsed.searchParams.get("limit") || "50", 10), 200);
+    const result = {};
+    if (type === "all" || type === "scans") result.scans = db.prepare("SELECT id,host,open_ports,created_at FROM scan_history ORDER BY id DESC LIMIT ?").all(limit);
+    if (type === "all" || type === "proxy") result.proxy = db.prepare("SELECT id,url,method,status,created_at FROM proxy_history ORDER BY id DESC LIMIT ?").all(limit);
+    if (type === "all" || type === "fuzz")  result.fuzz  = db.prepare("SELECT id,url,payloads_count,created_at FROM fuzz_history ORDER BY id DESC LIMIT ?").all(limit);
+    send(res, 200, result);
+    return;
+  }
+
+  // GET /whois?domain=example.com
+  if (path === "/whois") {
+    const domain = parsed.searchParams.get("domain");
+    if (!domain) { send(res, 400, { error: "Missing domain" }); return; }
+    const cleanDomain = domain.replace(/^https?:\/\//, "").split("/")[0].toLowerCase();
+    if (await isBlockedTarget(cleanDomain)) { send(res, 403, { error: "Target not allowed" }); return; }
+    try {
+      const rdapData = await new Promise((resolve, reject) => {
+        const req2 = https.get({
+          hostname: "rdap.org",
+          path: `/domain/${encodeURIComponent(cleanDomain)}`,
+          headers: { Accept: "application/json", "User-Agent": "SecurityScanner/1.0" },
+          timeout: 8000,
+        }, r2 => {
+          let data = "";
+          r2.on("data", c => { if (data.length < 100000) data += c; });
+          r2.on("end", () => resolve({ status: r2.statusCode, body: data }));
+        });
+        req2.on("error", reject);
+        req2.on("timeout", () => { req2.destroy(); reject(new Error("timeout")); });
+      });
+      send(res, 200, { status: rdapData.status, body: rdapData.body });
+    } catch {
+      send(res, 200, { error: "WHOIS lookup failed" });
+    }
+    return;
+  }
+
   // GET /health
   if (path === "/health") {
     const s = Object.fromEntries(allStats.all().map(r => [r.key, r.value]));

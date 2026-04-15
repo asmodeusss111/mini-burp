@@ -1,26 +1,29 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import { C, SEV, CHECKS } from "../lib/constants.js";
-import { apiGet, getHeaders, portScan, dnsQ, cleanHost, validateHost, sendRequest } from "../lib/api.js";
+import { apiGet, getHeaders, portScan, dnsQ, cleanHost, validateHost, sendRequest, whoisLookup } from "../lib/api.js";
 import { Panel, Btn, Tag, Inp } from "../components/ui.jsx";
 
-function exportReport(domain, results, checks) {
-  const lines = [
-    `Mini Burp Scan Report`,
-    `Target: ${domain}`,
-    `Date: ${new Date().toISOString()}`,
-    `---`,
-  ];
-  for (const c of checks) {
-    const r = results[c.id];
-    if (!r) continue;
-    lines.push(`\n[${r.severity.toUpperCase()}] ${c.label}: ${r.summary}`);
-    r.lines?.forEach(l => lines.push(`  ${l}`));
-    r.recs?.forEach(rec => lines.push(`  → ${rec}`));
+function exportReport(domain, results, checks, format = "txt") {
+  let blob;
+  const filename = `burp-report-${domain.replace(/\./g, "_")}`;
+  if (format === "json") {
+    const data = { target: domain, date: new Date().toISOString(), results: {} };
+    for (const c of checks) { if (results[c.id]) data.results[c.id] = results[c.id]; }
+    blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  } else {
+    const lines = [`Mini Burp Scan Report`, `Target: ${domain}`, `Date: ${new Date().toISOString()}`, `---`];
+    for (const c of checks) {
+      const r = results[c.id];
+      if (!r) continue;
+      lines.push(`\n[${r.severity.toUpperCase()}] ${c.label}: ${r.summary}`);
+      r.lines?.forEach(l => lines.push(`  ${l}`));
+      r.recs?.forEach(rec => lines.push(`  → ${rec}`));
+    }
+    blob = new Blob([lines.join("\n")], { type: "text/plain" });
   }
-  const blob = new Blob([lines.join("\n")], { type: "text/plain" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  a.download = `burp-report-${domain.replace(/\./g, "_")}.txt`;
+  a.download = `${filename}.${format}`;
   a.click();
   URL.revokeObjectURL(a.href);
 }
@@ -648,6 +651,39 @@ export default function ScannerTab({ proxyOnline }) {
       log(`[+] Sensitive Files: ${exposed.length > 0 ? "FOUND" : "OK"}`, exposed.length > 0 ? C.red : C.green);
     } catch { setR("sensitive", { severity: "info", summary: "Error", lines: ["[-] Error"], recs: [] }); }
 
+    // 20. WHOIS / RDAP
+    markA("whois");
+    try {
+      const w = await whoisLookup(host);
+      if (!w) {
+        setR("whois", { severity: "info", summary: "No data", lines: ["[-] RDAP lookup failed or unsupported TLD"], recs: [] });
+      } else {
+        const registrar  = w.entities?.find(e => e.roles?.includes("registrar"))?.vcardArray?.[1]?.find(v => v[0] === "fn")?.[3] || w.entities?.find(e => e.roles?.includes("registrar"))?.handle || "Unknown";
+        const expiry     = w.events?.find(e => e.eventAction === "expiration")?.eventDate;
+        const created    = w.events?.find(e => e.eventAction === "registration")?.eventDate;
+        const updated    = w.events?.find(e => e.eventAction === "last changed")?.eventDate;
+        const nameservers = w.nameservers?.map(ns => ns.ldhName).join(", ") || "—";
+        const expiryDate = expiry ? new Date(expiry) : null;
+        const daysLeft   = expiryDate ? Math.floor((expiryDate - Date.now()) / 86400000) : null;
+        const sev = daysLeft !== null && daysLeft < 30 ? "high" : daysLeft !== null && daysLeft < 90 ? "medium" : "low";
+        setR("whois", {
+          severity: sev,
+          summary: expiry ? `Expires in ${daysLeft}d (${expiryDate.toLocaleDateString()})` : "Registered",
+          lines: [
+            `Domain: ${w.ldhName || host}`,
+            `Registrar: ${registrar}`,
+            `Registered: ${created ? new Date(created).toLocaleDateString() : "—"}`,
+            `Expires: ${expiry ? `${new Date(expiry).toLocaleDateString()} (${daysLeft} days)` : "—"}`,
+            `Updated: ${updated ? new Date(updated).toLocaleDateString() : "—"}`,
+            `Nameservers: ${nameservers}`,
+          ],
+          recs: daysLeft !== null && daysLeft < 30 ? [`Renew domain immediately — expires in ${daysLeft} days!`] :
+                daysLeft !== null && daysLeft < 90 ? [`Consider renewing domain soon — ${daysLeft} days left`] : [],
+        });
+        log(`[+] WHOIS: expires in ${daysLeft ?? "?"}d`, daysLeft !== null && daysLeft < 30 ? C.red : C.green);
+      }
+    } catch { setR("whois", { severity: "info", summary: "Error", lines: ["[-] WHOIS error"], recs: [] }); }
+
     log("[*] Scan complete!", C.accent);
     setPhase("done");
   }, [domain, proxyOnline]);
@@ -677,7 +713,10 @@ export default function ScannerTab({ proxyOnline }) {
             {phase === "idle" ? "▶" : phase === "scanning" ? "…" : "↺"}
           </Btn>
           {phase === "done" && (
-            <Btn onClick={() => exportReport(domain, results, CHECKS)} small>📥 Export</Btn>
+            <>
+              <Btn onClick={() => exportReport(domain, results, CHECKS, "txt")} small>📥 TXT</Btn>
+              <Btn onClick={() => exportReport(domain, results, CHECKS, "json")} small>{ } JSON</Btn>
+            </>
           )}
           {phase === "scanning" && (
             <Btn onClick={() => { sslAbort.current?.abort(); setPhase("done"); }} small color={C.red}>✕</Btn>
