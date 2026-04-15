@@ -57,7 +57,7 @@ function checkRate(ip, route) {
 setInterval(() => { const now = Date.now(); for (const [k,v] of rateLimits) if (now > v.resetAt) rateLimits.delete(k); }, 300_000);
 
 // ── Headers ───────────────────────────────────────────────────────────────────
-const CORS_ORIGIN = process.env.CORS_ORIGIN || "http://localhost:5173";
+const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
 
 function secHeaders(res) {
   res.setHeader("Access-Control-Allow-Origin",  CORS_ORIGIN);
