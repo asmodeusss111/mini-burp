@@ -1,15 +1,62 @@
-import http  from "http";
-import https from "https";
-import net   from "net";
-import fs    from "fs";
+import http     from "http";
+import https    from "https";
+import net      from "net";
+import fs       from "fs";
 import nodePath from "path";
 import { lookup } from "dns/promises";
 import { fileURLToPath } from "url";
+import Database from "better-sqlite3";
 
 const __dirname = nodePath.dirname(fileURLToPath(import.meta.url));
 const PORT      = process.env.PORT || 8080;
 const MAX_BODY  = 1 * 1024 * 1024; // 1 MB
 const DIST_DIR  = nodePath.join(__dirname, "dist");
+const DATA_DIR  = process.env.DATA_DIR || __dirname;
+const DB_PATH   = nodePath.join(DATA_DIR, "miniburp.db");
+
+// ── Database ──────────────────────────────────────────────────────────────────
+const db = new Database(DB_PATH);
+db.pragma("journal_mode = WAL");
+db.exec(`
+  CREATE TABLE IF NOT EXISTS stats (
+    key   TEXT PRIMARY KEY,
+    value INTEGER DEFAULT 0
+  );
+  INSERT OR IGNORE INTO stats VALUES ('proxy_hits', 0);
+  INSERT OR IGNORE INTO stats VALUES ('scan_hits', 0);
+  INSERT OR IGNORE INTO stats VALUES ('fuzz_hits', 0);
+  INSERT OR IGNORE INTO stats VALUES ('header_hits', 0);
+  INSERT OR IGNORE INTO stats VALUES ('blocked_ssrf', 0);
+  INSERT OR IGNORE INTO stats VALUES ('rate_limited', 0);
+
+  CREATE TABLE IF NOT EXISTS scan_history (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    host       TEXT NOT NULL,
+    open_ports TEXT,
+    created_at INTEGER DEFAULT (unixepoch())
+  );
+
+  CREATE TABLE IF NOT EXISTS proxy_history (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    url        TEXT NOT NULL,
+    method     TEXT DEFAULT 'GET',
+    status     INTEGER,
+    created_at INTEGER DEFAULT (unixepoch())
+  );
+
+  CREATE TABLE IF NOT EXISTS fuzz_history (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    url            TEXT NOT NULL,
+    payloads_count INTEGER,
+    results        TEXT,
+    created_at     INTEGER DEFAULT (unixepoch())
+  );
+`);
+
+const incStat = db.prepare("UPDATE stats SET value = value + 1 WHERE key = ?");
+const getStat = db.prepare("SELECT value FROM stats WHERE key = ?");
+const allStats = db.prepare("SELECT key, value FROM stats");
+function stat(key) { return getStat.get(key)?.value ?? 0; }
 
 // ── SSRF guard ────────────────────────────────────────────────────────────────
 const PRIVATE_IP_RE = /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|::1$|fc00:|fe80:)/i;
@@ -135,7 +182,7 @@ http.createServer(async (req, res) => {
   const parsed   = new URL(req.url, "http://localhost");
   const path     = parsed.pathname;
 
-  if (checkRate(clientIP, path)) { send(res, 429, { error: "Too many requests. Try again in a minute." }); return; }
+  if (checkRate(clientIP, path)) { incStat.run("rate_limited"); send(res, 429, { error: "Too many requests. Try again in a minute." }); return; }
 
   // Read body with 1 MB limit
   let body = "", bodySize = 0, aborted = false;
@@ -151,7 +198,9 @@ http.createServer(async (req, res) => {
   if (path === "/proxy") {
     const target = parsed.searchParams.get("url");
     if (!target || !isValidUrl(target)) { send(res, 400, { error: "Invalid or missing url parameter" }); return; }
-    if (await isBlockedTarget(new URL(target).hostname)) { send(res, 403, { error: "Target not allowed" }); return; }
+    if (await isBlockedTarget(new URL(target).hostname)) { incStat.run("blocked_ssrf"); send(res, 403, { error: "Target not allowed" }); return; }
+    incStat.run("proxy_hits");
+    db.prepare("INSERT INTO proxy_history (url, method) VALUES (?, 'GET')").run(target);
     proxyRequest(target, "GET", {}, null, res);
     return;
   }
@@ -161,10 +210,12 @@ http.createServer(async (req, res) => {
     let payload;
     try { payload = JSON.parse(body); } catch { send(res, 400, { error: "Invalid JSON body" }); return; }
     if (!payload.url || !isValidUrl(payload.url)) { send(res, 400, { error: "Invalid or missing url" }); return; }
-    if (await isBlockedTarget(new URL(payload.url).hostname)) { send(res, 403, { error: "Target not allowed" }); return; }
+    if (await isBlockedTarget(new URL(payload.url).hostname)) { incStat.run("blocked_ssrf"); send(res, 403, { error: "Target not allowed" }); return; }
     const SAFE = new Set(["GET","POST","PUT","DELETE","PATCH","HEAD","OPTIONS"]);
     const method = (payload.method || "GET").toUpperCase();
     if (!SAFE.has(method)) { send(res, 400, { error: "Invalid HTTP method" }); return; }
+    incStat.run("proxy_hits");
+    db.prepare("INSERT INTO proxy_history (url, method) VALUES (?, ?)").run(payload.url, method);
     proxyRequest(payload.url, method, payload.headers || {}, payload.body || null, res);
     return;
   }
@@ -173,10 +224,13 @@ http.createServer(async (req, res) => {
   if (path === "/portscan") {
     const host = parsed.searchParams.get("host");
     if (!host) { send(res, 400, { error: "Missing host parameter" }); return; }
-    if (await isBlockedTarget(host)) { send(res, 403, { error: "Target not allowed" }); return; }
+    if (await isBlockedTarget(host)) { incStat.run("blocked_ssrf"); send(res, 403, { error: "Target not allowed" }); return; }
+    incStat.run("scan_hits");
     secHeaders(res);
     res.writeHead(200, { "Content-Type": "application/json" });
     const results = await Promise.all(PORTS.map(p => scanPort(host, p)));
+    const openPorts = results.filter(r => r.status === "open").map(r => r.port);
+    db.prepare("INSERT INTO scan_history (host, open_ports) VALUES (?, ?)").run(host, JSON.stringify(openPorts));
     res.end(JSON.stringify({ host, results }));
     return;
   }
@@ -185,7 +239,8 @@ http.createServer(async (req, res) => {
   if (path === "/headers") {
     const target = parsed.searchParams.get("url");
     if (!target || !isValidUrl(target)) { send(res, 400, { error: "Invalid or missing url parameter" }); return; }
-    if (await isBlockedTarget(new URL(target).hostname)) { send(res, 403, { error: "Target not allowed" }); return; }
+    if (await isBlockedTarget(new URL(target).hostname)) { incStat.run("blocked_ssrf"); send(res, 403, { error: "Target not allowed" }); return; }
+    incStat.run("header_hits");
     proxyRequest(target, "HEAD", {}, null, res);
     return;
   }
@@ -239,13 +294,24 @@ http.createServer(async (req, res) => {
       await new Promise(r => setTimeout(r, 100));
     }
 
+    incStat.run("fuzz_hits");
+    db.prepare("INSERT INTO fuzz_history (url, payloads_count, results) VALUES (?, ?, ?)").run(fuzzUrl, payloads.length, JSON.stringify(results));
     send(res, 200, { results });
     return;
   }
 
   // GET /health
   if (path === "/health") {
-    send(res, 200, { ok: true });
+    const s = Object.fromEntries(allStats.all().map(r => [r.key, r.value]));
+    const recentScans   = db.prepare("SELECT host, open_ports, created_at FROM scan_history  ORDER BY id DESC LIMIT 5").all();
+    const recentProxy   = db.prepare("SELECT url, method, created_at FROM proxy_history ORDER BY id DESC LIMIT 5").all();
+    const recentFuzz    = db.prepare("SELECT url, payloads_count, created_at FROM fuzz_history  ORDER BY id DESC LIMIT 5").all();
+    send(res, 200, {
+      ok: true,
+      uptime: Math.floor(process.uptime()),
+      stats: s,
+      recent: { scans: recentScans, proxy: recentProxy, fuzz: recentFuzz },
+    });
     return;
   }
 
