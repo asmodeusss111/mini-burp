@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Mini Burp — Security Scanner</title>
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;700&display=swap" rel="stylesheet" />
+
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230d1117'/%3E%3Ctext x='4' y='26' font-size='22'%3E%F0%9F%94%92%3C/text%3E%3C/svg%3E" />
+
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+      :root {
+        --bg:      #0d1117;
+        --panel:   #161b22;
+        --border:  #30363d;
+        --accent:  #f97316;
+        --accent2: #fb923c;
+        --text:    #e6edf3;
+        --muted:   #8b949e;
+        --green:   #3fb950;
+        --red:     #f85149;
+        --blue:    #58a6ff;
+        --purple:  #a371f7;
+      }
+
+      html, body {
+        height: 100%;
+        background: var(--bg);
+        color: var(--text);
+        font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+        overflow-x: hidden;
+      }
+
+      /* ── Loading screen ─────────────────────────────────── */
+      #splash {
+        position: fixed;
+        inset: 0;
+        z-index: 9999;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: var(--bg);
+        transition: opacity .5s ease, visibility .5s ease;
+      }
+      #splash.hidden { opacity: 0; visibility: hidden; }
+
+      .splash-logo {
+        font-size: 48px;
+        margin-bottom: 16px;
+        animation: float 3s ease-in-out infinite;
+      }
+      .splash-title {
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 4px;
+        background: linear-gradient(90deg, var(--accent), var(--purple), var(--blue));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        margin-bottom: 8px;
+      }
+      .splash-sub {
+        color: var(--muted);
+        font-size: 11px;
+        letter-spacing: 2px;
+        margin-bottom: 40px;
+      }
+      .splash-bar {
+        width: 200px;
+        height: 2px;
+        background: var(--border);
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      .splash-bar-fill {
+        height: 100%;
+        background: linear-gradient(90deg, var(--accent), var(--purple));
+        animation: load 1.4s ease-in-out forwards;
+        border-radius: 2px;
+      }
+
+      /* ── Root ───────────────────────────────────────────── */
+      #root { min-height: 100vh; }
+
+      /* ── Grid background ────────────────────────────────── */
+      body::before {
+        content: '';
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+        background-image:
+          linear-gradient(var(--border) 1px, transparent 1px),
+          linear-gradient(90deg, var(--border) 1px, transparent 1px);
+        background-size: 40px 40px;
+        opacity: .18;
+        mask-image: radial-gradient(ellipse 80% 70% at 50% 0%, black 40%, transparent 100%);
+      }
+
+      /* ── Glow orbs ──────────────────────────────────────── */
+      body::after {
+        content: '';
+        position: fixed;
+        top: -160px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 700px;
+        height: 400px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(249,115,22,.12) 0%, rgba(163,113,247,.07) 50%, transparent 70%);
+        pointer-events: none;
+        z-index: 0;
+        filter: blur(30px);
+      }
+
+      /* ── Scrollbar ──────────────────────────────────────── */
+      ::-webkit-scrollbar { width: 6px; height: 6px; }
+      ::-webkit-scrollbar-track { background: var(--bg); }
+      ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+      /* ── Animations ─────────────────────────────────────── */
+      @keyframes float {
+        0%, 100% { transform: translateY(0); }
+        50%       { transform: translateY(-8px); }
+      }
+      @keyframes load {
+        0%   { width: 0%; }
+        60%  { width: 75%; }
+        100% { width: 100%; }
+      }
+      @keyframes pulse {
+        0%, 100% { opacity: .3; transform: scale(.8); }
+        50%       { opacity: 1;  transform: scale(1.2); }
+      }
+      @keyframes blink {
+        0%, 100% { opacity: 1; }
+        50%       { opacity: 0; }
+      }
+      @keyframes scanline {
+        0%   { top: -4px; }
+        100% { top: 100%; }
+      }
+      @keyframes fadein {
+        from { opacity: 0; transform: translateY(10px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+
+      /* ── Scanline effect ────────────────────────────────── */
+      .scanline {
+        position: fixed;
+        left: 0; right: 0;
+        height: 4px;
+        background: linear-gradient(transparent, rgba(249,115,22,.06), transparent);
+        pointer-events: none;
+        z-index: 1;
+        animation: scanline 8s linear infinite;
+      }
+
+      /* ── App wrapper (passed down to React) ─────────────── */
+      #app-wrapper {
+        position: relative;
+        z-index: 1;
+        animation: fadein .4s ease .2s both;
+      }
+
+      /* ── Selection color ────────────────────────────────── */
+      ::selection {
+        background: rgba(249,115,22,.25);
+        color: var(--text);
+      }
+
+      /* ── React component globals ────────────────────────── */
+      select option { background: var(--panel); }
+    </style>
+  </head>
+  <body>
+
+    <!-- Animated scanline overlay -->
+    <div class="scanline"></div>
+
+    <!-- Splash / loading screen -->
+    <div id="splash">
+      <div class="splash-logo">🔒</div>
+      <div class="splash-title">MINI BURP</div>
+      <div class="splash-sub">SECURITY SCANNER — COMMUNITY EDITION</div>
+      <div class="splash-bar"><div class="splash-bar-fill"></div></div>
+    </div>
+
+    <!-- React mounts here -->
+    <div id="app-wrapper">
+      <div id="root"></div>
+    </div>
+
+    <script type="module" src="/src/main.jsx"></script>
+
+    <script>
+      // Hide splash once React has rendered
+      window.addEventListener('load', () => {
+        setTimeout(() => {
+          const s = document.getElementById('splash');
+          if (s) s.classList.add('hidden');
+        }, 1500);
+      });
+    </script>
+  </body>
+</html>

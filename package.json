@@ -1,0 +1,21 @@
+{
+  "name": "mini-burp",
+  "version": "3.0.0",
+  "description": "Mini Burp Suite — Security Scanner",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "proxy": "node server.js",
+    "start": "npm run build && node server.js"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.2"
+  }
+}
