@@ -46,33 +46,59 @@
         align-items: center;
         justify-content: center;
         background: var(--bg);
-        transition: opacity .5s ease, visibility .5s ease;
+        transition: opacity .6s ease, visibility .6s ease;
+        gap: 0;
       }
       #splash.hidden { opacity: 0; visibility: hidden; }
 
-      .splash-logo {
-        font-size: 48px;
-        margin-bottom: 16px;
-        animation: float 3s ease-in-out infinite;
+      .splash-icon {
+        width: 64px;
+        height: 64px;
+        margin-bottom: 28px;
+        position: relative;
+      }
+      .splash-icon svg {
+        width: 64px;
+        height: 64px;
+        filter: drop-shadow(0 0 12px rgba(249,115,22,.5));
+        animation: splashPulse 2s ease-in-out infinite;
       }
       .splash-title {
-        font-size: 22px;
+        font-size: 28px;
         font-weight: 700;
-        letter-spacing: 4px;
-        background: linear-gradient(90deg, var(--accent), var(--purple), var(--blue));
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-        background-clip: text;
-        margin-bottom: 8px;
+        letter-spacing: 8px;
+        color: var(--text);
+        margin-bottom: 6px;
+        position: relative;
       }
+      .splash-title span.accent { color: var(--accent); }
       .splash-sub {
         color: var(--muted);
-        font-size: 11px;
-        letter-spacing: 2px;
-        margin-bottom: 40px;
+        font-size: 10px;
+        letter-spacing: 3px;
+        margin-bottom: 36px;
+        text-transform: uppercase;
       }
+      .splash-lines {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        width: 260px;
+        margin-bottom: 28px;
+      }
+      .splash-line {
+        font-size: 11px;
+        color: var(--muted);
+        opacity: 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .splash-line.ok   { color: var(--green); }
+      .splash-line.show { animation: lineFadeIn .3s ease forwards; }
+      .splash-line::before { content: '>'; color: var(--accent); }
       .splash-bar {
-        width: 200px;
+        width: 260px;
         height: 2px;
         background: var(--border);
         border-radius: 2px;
@@ -80,9 +106,18 @@
       }
       .splash-bar-fill {
         height: 100%;
+        width: 0%;
         background: linear-gradient(90deg, var(--accent), var(--purple));
-        animation: load 1.4s ease-in-out forwards;
         border-radius: 2px;
+        transition: width .3s ease;
+      }
+      @keyframes splashPulse {
+        0%,100% { filter: drop-shadow(0 0 8px rgba(249,115,22,.4)); transform: scale(1); }
+        50%      { filter: drop-shadow(0 0 20px rgba(249,115,22,.8)); transform: scale(1.05); }
+      }
+      @keyframes lineFadeIn {
+        from { opacity: 0; transform: translateX(-6px); }
+        to   { opacity: 1; transform: translateX(0); }
       }
 
       /* ── Root ───────────────────────────────────────────── */
@@ -186,10 +221,27 @@
 
     <!-- Splash / loading screen -->
     <div id="splash">
-      <div class="splash-logo">🔒</div>
-      <div class="splash-title">MINI BURP</div>
-      <div class="splash-sub">SECURITY SCANNER — COMMUNITY EDITION</div>
-      <div class="splash-bar"><div class="splash-bar-fill"></div></div>
+      <div class="splash-icon">
+        <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="32" cy="32" r="30" stroke="#f97316" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.4"/>
+          <circle cx="32" cy="32" r="22" stroke="#f97316" stroke-width="1" opacity="0.3"/>
+          <circle cx="32" cy="32" r="4" fill="#f97316"/>
+          <line x1="32" y1="2"  x2="32" y2="14" stroke="#f97316" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="32" y1="50" x2="32" y2="62" stroke="#f97316" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="2"  y1="32" x2="14" y2="32" stroke="#f97316" stroke-width="1.5" stroke-linecap="round"/>
+          <line x1="50" y1="32" x2="62" y2="32" stroke="#f97316" stroke-width="1.5" stroke-linecap="round"/>
+          <circle cx="32" cy="32" r="10" stroke="#a371f7" stroke-width="1" stroke-dasharray="2 2" opacity="0.6"/>
+        </svg>
+      </div>
+      <div class="splash-title"><span class="accent">MINI</span>&nbsp;BURP</div>
+      <div class="splash-sub">Security Scanner — Community Edition</div>
+      <div class="splash-lines" id="splash-lines">
+        <div class="splash-line" id="sl-1">Initializing engine...</div>
+        <div class="splash-line" id="sl-2">Loading modules...</div>
+        <div class="splash-line" id="sl-3">Checking proxy...</div>
+        <div class="splash-line ok" id="sl-4">Ready.</div>
+      </div>
+      <div class="splash-bar"><div class="splash-bar-fill" id="splash-fill"></div></div>
     </div>
 
     <!-- React mounts here -->
@@ -200,12 +252,25 @@
     <script type="module" src="/src/main.jsx"></script>
 
     <script>
-      // Hide splash once React has rendered
+      const steps = [
+        { id: 'sl-1', delay: 200,  fill: 25 },
+        { id: 'sl-2', delay: 550,  fill: 55 },
+        { id: 'sl-3', delay: 900,  fill: 80 },
+        { id: 'sl-4', delay: 1200, fill: 100 },
+      ];
+      steps.forEach(({ id, delay, fill }) => {
+        setTimeout(() => {
+          const el = document.getElementById(id);
+          if (el) el.classList.add('show');
+          const bar = document.getElementById('splash-fill');
+          if (bar) bar.style.width = fill + '%';
+        }, delay);
+      });
       window.addEventListener('load', () => {
         setTimeout(() => {
           const s = document.getElementById('splash');
           if (s) s.classList.add('hidden');
-        }, 1500);
+        }, 1700);
       });
     </script>
   </body>

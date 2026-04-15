@@ -1,0 +1,45 @@
+<!-- OLD SPLASH DESIGN BACKUP -->
+<!--
+    <div id="splash">
+      <div class="splash-logo">🔒</div>
+      <div class="splash-title">MINI BURP</div>
+      <div class="splash-sub">SECURITY SCANNER — COMMUNITY EDITION</div>
+      <div class="splash-bar"><div class="splash-bar-fill"></div></div>
+    </div>
+
+    CSS:
+      .splash-logo {
+        font-size: 48px;
+        margin-bottom: 16px;
+        animation: float 3s ease-in-out infinite;
+      }
+      .splash-title {
+        font-size: 22px;
+        font-weight: 700;
+        letter-spacing: 4px;
+        background: linear-gradient(90deg, var(--accent), var(--purple), var(--blue));
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        margin-bottom: 8px;
+      }
+      .splash-sub {
+        color: var(--muted);
+        font-size: 11px;
+        letter-spacing: 2px;
+        margin-bottom: 40px;
+      }
+      .splash-bar {
+        width: 200px;
+        height: 2px;
+        background: var(--border);
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      .splash-bar-fill {
+        height: 100%;
+        background: linear-gradient(90deg, var(--accent), var(--purple));
+        animation: load 1.4s ease-in-out forwards;
+        border-radius: 2px;
+      }
+-->
