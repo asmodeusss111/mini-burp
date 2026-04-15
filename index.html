@@ -46,77 +46,110 @@
         align-items: center;
         justify-content: center;
         background: var(--bg);
-        transition: opacity .6s ease, visibility .6s ease;
+        transition: opacity .7s ease, visibility .7s ease;
         gap: 0;
       }
       #splash.hidden { opacity: 0; visibility: hidden; }
 
+      /* Radial glow behind icon */
+      #splash::before {
+        content: '';
+        position: absolute;
+        width: 340px;
+        height: 340px;
+        border-radius: 50%;
+        background: radial-gradient(circle, rgba(88,166,255,.08) 0%, rgba(163,113,247,.06) 50%, transparent 70%);
+        pointer-events: none;
+        filter: blur(20px);
+      }
+
       .splash-icon {
-        width: 64px;
-        height: 64px;
-        margin-bottom: 28px;
+        width: 72px;
+        height: 72px;
+        margin-bottom: 32px;
         position: relative;
+        z-index: 1;
       }
       .splash-icon svg {
-        width: 64px;
-        height: 64px;
-        filter: drop-shadow(0 0 12px rgba(249,115,22,.5));
+        width: 72px;
+        height: 72px;
+        animation: splashSpin 8s linear infinite;
+        filter: drop-shadow(0 0 14px rgba(88,166,255,.45));
+      }
+      .splash-icon-inner {
+        position: absolute;
+        inset: 18px;
         animation: splashPulse 2s ease-in-out infinite;
       }
+
       .splash-title {
-        font-size: 28px;
+        font-size: 30px;
         font-weight: 700;
-        letter-spacing: 8px;
-        color: var(--text);
-        margin-bottom: 6px;
+        letter-spacing: 10px;
+        background: linear-gradient(135deg, #58a6ff 0%, #a371f7 50%, #06b6d4 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+        margin-bottom: 8px;
         position: relative;
+        z-index: 1;
       }
-      .splash-title span.accent { color: var(--accent); }
       .splash-sub {
         color: var(--muted);
         font-size: 10px;
         letter-spacing: 3px;
-        margin-bottom: 36px;
+        margin-bottom: 40px;
         text-transform: uppercase;
+        z-index: 1;
+        position: relative;
       }
       .splash-lines {
         display: flex;
         flex-direction: column;
-        gap: 6px;
+        gap: 7px;
         width: 260px;
-        margin-bottom: 28px;
+        margin-bottom: 24px;
+        position: relative;
+        z-index: 1;
       }
       .splash-line {
         font-size: 11px;
-        color: var(--muted);
+        color: #4a5568;
         opacity: 0;
         display: flex;
         align-items: center;
         gap: 8px;
       }
-      .splash-line.ok   { color: var(--green); }
-      .splash-line.show { animation: lineFadeIn .3s ease forwards; }
-      .splash-line::before { content: '>'; color: var(--accent); }
+      .splash-line.ok   { color: #3fb950; }
+      .splash-line.show { animation: lineFadeIn .35s ease forwards; }
+      .splash-line::before { content: '›'; color: #58a6ff; font-size: 14px; }
       .splash-bar {
         width: 260px;
-        height: 2px;
-        background: var(--border);
+        height: 1px;
+        background: #1e2530;
         border-radius: 2px;
         overflow: hidden;
+        position: relative;
+        z-index: 1;
       }
       .splash-bar-fill {
         height: 100%;
         width: 0%;
-        background: linear-gradient(90deg, var(--accent), var(--purple));
+        background: linear-gradient(90deg, #58a6ff, #a371f7, #06b6d4);
         border-radius: 2px;
-        transition: width .3s ease;
+        transition: width .4s cubic-bezier(.4,0,.2,1);
+        box-shadow: 0 0 8px rgba(88,166,255,.6);
+      }
+      @keyframes splashSpin {
+        from { transform: rotate(0deg); }
+        to   { transform: rotate(360deg); }
       }
       @keyframes splashPulse {
-        0%,100% { filter: drop-shadow(0 0 8px rgba(249,115,22,.4)); transform: scale(1); }
-        50%      { filter: drop-shadow(0 0 20px rgba(249,115,22,.8)); transform: scale(1.05); }
+        0%,100% { opacity: .7; transform: scale(.9); }
+        50%      { opacity: 1;  transform: scale(1.1); }
       }
       @keyframes lineFadeIn {
-        from { opacity: 0; transform: translateX(-6px); }
+        from { opacity: 0; transform: translateX(-8px); }
         to   { opacity: 1; transform: translateX(0); }
       }
 
@@ -222,18 +255,31 @@
     <!-- Splash / loading screen -->
     <div id="splash">
       <div class="splash-icon">
-        <svg viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <circle cx="32" cy="32" r="30" stroke="#f97316" stroke-width="1.5" stroke-dasharray="4 3" opacity="0.4"/>
-          <circle cx="32" cy="32" r="22" stroke="#f97316" stroke-width="1" opacity="0.3"/>
-          <circle cx="32" cy="32" r="4" fill="#f97316"/>
-          <line x1="32" y1="2"  x2="32" y2="14" stroke="#f97316" stroke-width="1.5" stroke-linecap="round"/>
-          <line x1="32" y1="50" x2="32" y2="62" stroke="#f97316" stroke-width="1.5" stroke-linecap="round"/>
-          <line x1="2"  y1="32" x2="14" y2="32" stroke="#f97316" stroke-width="1.5" stroke-linecap="round"/>
-          <line x1="50" y1="32" x2="62" y2="32" stroke="#f97316" stroke-width="1.5" stroke-linecap="round"/>
-          <circle cx="32" cy="32" r="10" stroke="#a371f7" stroke-width="1" stroke-dasharray="2 2" opacity="0.6"/>
+        <!-- Outer dashed ring (rotates) -->
+        <svg viewBox="0 0 72 72" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <circle cx="36" cy="36" r="34" stroke="url(#g1)" stroke-width="1" stroke-dasharray="5 4" opacity="0.5"/>
+          <circle cx="36" cy="36" r="26" stroke="url(#g2)" stroke-width="1" opacity="0.35"/>
+          <defs>
+            <linearGradient id="g1" x1="0" y1="0" x2="72" y2="72" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#58a6ff"/>
+              <stop offset="100%" stop-color="#a371f7"/>
+            </linearGradient>
+            <linearGradient id="g2" x1="0" y1="0" x2="72" y2="72" gradientUnits="userSpaceOnUse">
+              <stop offset="0%" stop-color="#a371f7"/>
+              <stop offset="100%" stop-color="#06b6d4"/>
+            </linearGradient>
+          </defs>
+          <!-- Crosshair lines -->
+          <line x1="36" y1="2"  x2="36" y2="16" stroke="#58a6ff" stroke-width="1.5" stroke-linecap="round" opacity="0.8"/>
+          <line x1="36" y1="56" x2="36" y2="70" stroke="#58a6ff" stroke-width="1.5" stroke-linecap="round" opacity="0.8"/>
+          <line x1="2"  y1="36" x2="16" y2="36" stroke="#58a6ff" stroke-width="1.5" stroke-linecap="round" opacity="0.8"/>
+          <line x1="56" y1="36" x2="70" y2="36" stroke="#58a6ff" stroke-width="1.5" stroke-linecap="round" opacity="0.8"/>
+          <!-- Center dot -->
+          <circle cx="36" cy="36" r="3.5" fill="url(#g1)"/>
+          <circle cx="36" cy="36" r="7" stroke="url(#g2)" stroke-width="1" opacity="0.5"/>
         </svg>
       </div>
-      <div class="splash-title"><span class="accent">MINI</span>&nbsp;BURP</div>
+      <div class="splash-title">MINI BURP</div>
       <div class="splash-sub">Security Scanner — Community Edition</div>
       <div class="splash-lines" id="splash-lines">
         <div class="splash-line" id="sl-1">Initializing engine...</div>
