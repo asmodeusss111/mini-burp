@@ -72,7 +72,11 @@ export async function whoisLookup(domain) {
   try {
     const r = await fetch(`/whois?domain=${encodeURIComponent(domain)}`).then(r => r.json()).catch(() => null);
     if (!r || r.error) return null;
-    try { return JSON.parse(r.body); } catch { return null; }
+    try {
+      const parsed = JSON.parse(r.body);
+      if (r.resolvedDomain) parsed._resolvedDomain = r.resolvedDomain;
+      return parsed;
+    } catch { return null; }
   } catch { return null; }
 }
 

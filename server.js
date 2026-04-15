@@ -319,22 +319,33 @@ http.createServer(async (req, res) => {
     if (!domain) { send(res, 400, { error: "Missing domain" }); return; }
     const cleanDomain = domain.replace(/^https?:\/\//, "").split("/")[0].toLowerCase();
     if (await isBlockedTarget(cleanDomain)) { send(res, 403, { error: "Target not allowed" }); return; }
-    try {
-      const rdapData = await new Promise((resolve, reject) => {
-        const req2 = https.get({
-          hostname: "rdap.org",
-          path: `/domain/${encodeURIComponent(cleanDomain)}`,
-          headers: { Accept: "application/json", "User-Agent": "SecurityScanner/1.0" },
-          timeout: 8000,
-        }, r2 => {
-          let data = "";
-          r2.on("data", c => { if (data.length < 100000) data += c; });
-          r2.on("end", () => resolve({ status: r2.statusCode, body: data }));
-        });
-        req2.on("error", reject);
-        req2.on("timeout", () => { req2.destroy(); reject(new Error("timeout")); });
+
+    // Build candidates: try full hostname, then strip subdomains one by one
+    const parts = cleanDomain.split(".");
+    const candidates = [];
+    for (let i = 0; i <= parts.length - 2; i++) candidates.push(parts.slice(i).join("."));
+
+    const rdapFetch = (d) => new Promise((resolve, reject) => {
+      const req2 = https.get({
+        hostname: "rdap.org",
+        path: `/domain/${encodeURIComponent(d)}`,
+        headers: { Accept: "application/json", "User-Agent": "SecurityScanner/1.0" },
+        timeout: 8000,
+      }, r2 => {
+        let data = "";
+        r2.on("data", c => { if (data.length < 100000) data += c; });
+        r2.on("end", () => resolve({ status: r2.statusCode, body: data }));
       });
-      send(res, 200, { status: rdapData.status, body: rdapData.body });
+      req2.on("error", reject);
+      req2.on("timeout", () => { req2.destroy(); reject(new Error("timeout")); });
+    });
+
+    try {
+      for (const candidate of candidates) {
+        const rdapData = await rdapFetch(candidate);
+        if (rdapData.status === 200) { send(res, 200, { status: 200, body: rdapData.body, resolvedDomain: candidate }); return; }
+      }
+      send(res, 200, { error: "WHOIS not found for this domain" });
     } catch {
       send(res, 200, { error: "WHOIS lookup failed" });
     }

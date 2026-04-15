@@ -670,7 +670,7 @@ export default function ScannerTab({ proxyOnline }) {
           severity: sev,
           summary: expiry ? `Expires in ${daysLeft}d (${expiryDate.toLocaleDateString()})` : "Registered",
           lines: [
-            `Domain: ${w.ldhName || host}`,
+            `Domain: ${w.ldhName || w._resolvedDomain || host}`,
             `Registrar: ${registrar}`,
             `Registered: ${created ? new Date(created).toLocaleDateString() : "—"}`,
             `Expires: ${expiry ? `${new Date(expiry).toLocaleDateString()} (${daysLeft} days)` : "—"}`,
