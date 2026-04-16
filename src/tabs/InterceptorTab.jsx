@@ -44,6 +44,43 @@ const INTERESTING_PATHS = new Set([
   "/secrets.yaml", "/db.sql", "/_cpanel", "/dump.sql.gz", "/api/admin",
 ]);
 
+function exportLog(target, log, format = "txt") {
+  const ts = new Date().toISOString().slice(0, 19).replace("T", "_").replace(/:/g, "-");
+  const filename = `interceptor_${target.replace(/[^a-z0-9]/gi, "_")}_${ts}`;
+  let blob;
+  if (format === "json") {
+    const data = {
+      target, generated: new Date().toISOString(),
+      total: log.length,
+      interesting: log.filter(e => e.interesting).length,
+      results: log.map(({ id, body, ...e }) => e),
+    };
+    blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+  } else {
+    const lines = [
+      `MINI BURP — Interceptor Report`,
+      `Target : ${target}`,
+      `Date   : ${new Date().toLocaleString("ru-RU")}`,
+      `Total  : ${log.length} paths`,
+      `Interesting: ${log.filter(e => e.interesting).length}`,
+      "─".repeat(60),
+      "",
+      ...log.map(e =>
+        `[${e.ts}] ${e.method} ${e.path}\n` +
+        `  Status: ${e.status}  Time: ${e.time}ms  Size: ${(e.size/1024).toFixed(1)}KB` +
+        (e.interesting ? "  ⚠ INTERESTING" : "") + "\n" +
+        `  URL: ${e.url}`
+      ),
+    ];
+    blob = new Blob([lines.join("\n")], { type: "text/plain" });
+  }
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = `${filename}.${format}`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
 export default function InterceptorTab({ proxyOnline }) {
   const [target, setTarget] = useState("");
   const [log, setLog] = useState([]);
@@ -132,6 +169,8 @@ export default function InterceptorTab({ proxyOnline }) {
           <Btn onClick={active ? stop : start} active color={active ? C.red : C.green} small>
             {active ? "■ Stop" : "▶ Start"}
           </Btn>
+          {log.length > 0 && !active && <Btn onClick={() => exportLog(cleanHost(target), log, "txt")} small>📥 TXT</Btn>}
+          {log.length > 0 && !active && <Btn onClick={() => exportLog(cleanHost(target), log, "json")} small>{"{ }"} JSON</Btn>}
           {log.length > 0 && <Btn onClick={() => setLog([])} small>Clear</Btn>}
         </div>
 
