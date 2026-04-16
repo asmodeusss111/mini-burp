@@ -5,7 +5,7 @@ const PROXY = "";  // empty = relative paths, proxied by Vite to localhost:8080
 export async function checkProxy() {
   try {
     const r = await fetch(`/health`, {
-      signal: AbortSignal.timeout(2000),
+      signal: AbortSignal.timeout(6000),
     });
     if (!r.ok) return false;
     const data = await r.json();

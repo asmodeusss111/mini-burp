@@ -101,10 +101,10 @@ export default function App() {
       {/* Status bar */}
       <div style={{ background: C.accent, padding: "2px 12px", display: "flex", gap: 16, alignItems: "center" }}>
         <span style={{ fontFamily: "monospace", fontSize: 10, color: "#fff" }}>
-          Proxy: {proxyOnline ? "localhost:8080 ✓" : "offline"}
+          Backend: {proxyOnline ? "online ✓" : "offline"}
         </span>
         <span style={{ fontFamily: "monospace", fontSize: 10, color: "#fff", opacity: 0.8 }}>
-          Ports/Headers: {proxyOnline ? "real TCP ✓" : "need proxy"}
+          Ports/Headers: {proxyOnline ? "real TCP ✓" : "limited"}
         </span>
         <span style={{ marginLeft: "auto", fontFamily: "monospace", fontSize: 10, color: "#fff", opacity: 0.8 }}>
           own sites only
