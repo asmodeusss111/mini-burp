@@ -365,6 +365,11 @@ http.createServer(async (req, res) => {
     doc.moveDown();
     doc.fontSize(12).text(`Target: ${payload.target}`);
     doc.text(`Date: ${new Date().toISOString()}`);
+    if (payload.results.score) {
+       doc.moveDown(1);
+       doc.fontSize(16).fillColor(payload.results.score.severity === "high" ? "red" : payload.results.score.severity === "medium" ? "orange" : "green").text(`Security Score: ${payload.results.score.summary}`);
+       doc.fillColor("black").fontSize(12);
+    }
     doc.moveDown(2);
     
     // Add summary graph/stats
@@ -446,19 +451,28 @@ http.createServer(async (req, res) => {
     if (path === "/api/admin/stats" && req.method === "GET") {
       const stats = Object.fromEntries(allStats.all().map(r => [r.key, r.value]));
       const recentScans = db.prepare("SELECT * FROM scan_history ORDER BY id DESC LIMIT 100").all();
-      const recentReports = db.prepare("SELECT id, host, created_at, length(report) as size FROM full_reports ORDER BY id DESC LIMIT 100").all();
+      const recentReports = db.prepare("SELECT id, host, created_at, length(report) as size, json_extract(report, '$._score') as score FROM full_reports ORDER BY id DESC LIMIT 100").all();
       
       let sevStats = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+      let avgScore = 0;
+      let totalScore = 0;
+      let scoredReports = 0;
       const allReports = db.prepare("SELECT report FROM full_reports").all();
       for (const r of allReports) {
         try {
           const parsed = JSON.parse(r.report);
+          if (parsed._score !== undefined) {
+             totalScore += parsed._score;
+             scoredReports++;
+          }
           for (const key of Object.keys(parsed)) {
+            if (key === "_score") continue;
             const s = parsed[key].severity;
             if (sevStats[s] !== undefined) sevStats[s]++;
           }
         } catch {}
       }
+      if (scoredReports > 0) avgScore = Math.round(totalScore / scoredReports);
       
       const osData = {
         uptime: process.uptime(),
@@ -466,7 +480,7 @@ http.createServer(async (req, res) => {
         railway: !!process.env.RAILWAY_PROJECT_ID
       };
 
-      send(res, 200, { stats, recentScans, recentReports, sevStats, osData });
+      send(res, 200, { stats, recentScans, recentReports, sevStats, osData, avgScore });
       return;
     }
 

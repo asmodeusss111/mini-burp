@@ -23,14 +23,14 @@ export default function App() {
   const [tab, setTab] = useState("scanner");
   const [proxyOnline, setProxy] = useState(false);
 
-  const [isAdminRoute, setIsAdminRoute] = useState(window.location.hash === "#admin-v8x2k9l1p5n3");
+  const [isAdminRoute, setIsAdminRoute] = useState(window.location.hash === "#/admin-x7A_2L9mBq1s");
 
   useEffect(() => {
     const check = async () => setProxy(await checkProxy());
     check();
     const iv = setInterval(check, 5000);
     
-    const handleHash = () => setIsAdminRoute(window.location.hash === "#admin-v8x2k9l1p5n3");
+    const handleHash = () => setIsAdminRoute(window.location.hash === "#/admin-x7A_2L9mBq1s");
     window.addEventListener("hashchange", handleHash);
     
     return () => {

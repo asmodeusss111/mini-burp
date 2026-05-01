@@ -134,6 +134,11 @@ export default function AdminTab() {
           <div style={{ display: "flex", justifyContent: "space-between", margin: "5px 0" }}>
             <span>Blocked Threats:</span> <span style={{ color: C.red }}>{data.stats.waf_hits || 0}</span>
           </div>
+          {data.avgScore > 0 && (
+            <div style={{ display: "flex", justifyContent: "space-between", margin: "5px 0", marginTop: 10, paddingTop: 10, borderTop: `1px solid ${C.border}` }}>
+              <span>Avg Security Score:</span> <span style={{ color: data.avgScore >= 80 ? C.green : data.avgScore >= 50 ? C.yellow : C.red, fontWeight: "bold" }}>{data.avgScore}/100</span>
+            </div>
+          )}
         </Panel>
 
         <Panel style={{ flex: 1, minWidth: 300, padding: 20 }}>
@@ -166,6 +171,7 @@ export default function AdminTab() {
                   <th>Target Host</th>
                   <th>Date</th>
                   <th>Size</th>
+                  <th>Score</th>
                 </tr>
               </thead>
               <tbody>
@@ -175,9 +181,10 @@ export default function AdminTab() {
                     <td style={{ color: C.blue }}>{r.host}</td>
                     <td>{new Date(r.created_at * 1000).toLocaleString()}</td>
                     <td>{(r.size / 1024).toFixed(1)} KB</td>
+                    <td style={{ color: r.score >= 80 ? C.green : r.score >= 50 ? C.yellow : C.red }}>{r.score ? `${r.score}/100` : "-"}</td>
                   </tr>
                 ))}
-                {data.recentReports.length === 0 && <tr><td colSpan="4" style={{ padding: 10, textAlign: "center", color: C.muted }}>No reports yet</td></tr>}
+                {data.recentReports.length === 0 && <tr><td colSpan="5" style={{ padding: 10, textAlign: "center", color: C.muted }}>No reports yet</td></tr>}
               </tbody>
             </table>
           </div>

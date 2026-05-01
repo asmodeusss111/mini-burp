@@ -41,5 +41,9 @@ export const CHECKS = [
   { id: "dirlisting", icon: "📂", label: "Dir Listing",     desc: "Common dirs" },
   { id: "sensitive",  icon: "🚨", label: "Sensitive Files", desc: ".env/.git/phpinfo" },
   { id: "whois",      icon: "🌐", label: "WHOIS / RDAP",    desc: "Registrar, expiry" },
+  { id: "brokenlinks",icon: "🔗", label: "Broken Links",    desc: "Resource Hijack" },
+  { id: "s3",         icon: "☁",  label: "S3 Buckets",      desc: "Public exposure" },
+  { id: "dnsbrute",   icon: "D",  label: "DNS Brute",       desc: "dev/test domains" },
   { id: "diff",       icon: "±",  label: "Scan Diff",       desc: "Compare to last" },
+  { id: "score",      icon: "💯", label: "Security Score",  desc: "Overall rating" },
 ];

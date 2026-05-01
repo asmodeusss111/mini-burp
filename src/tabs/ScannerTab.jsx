@@ -443,6 +443,7 @@ export default function ScannerTab({ proxyOnline }) {
       // Check for WAF response patterns via headers
       if (h["cf-ray"] || serverH.includes("cloudflare")) waf = "Cloudflare";
       else if (h["x-sucuri-id"] || h["x-sucuri-cache"] || serverH.includes("sucuri")) waf = "Sucuri";
+      else if (h["x-akamai-request-id"] || serverH.includes("akamai")) waf = "Akamai";
       else if (h["x-amz-cf-id"] || h["x-waf-event-info"]) waf = "AWS WAF";
       else if (h["x-cdn"]) waf = "Generic CDN/WAF";
       else if (status === 403 || status === 406 || status === 429 || status === 503) {
@@ -807,6 +808,7 @@ export default function ScannerTab({ proxyOnline }) {
       const SENS_FILES = [
         "/.env", "/.git/config", "/.htaccess", "/web.config",
         "/phpinfo.php", "/.DS_Store", "/config.php", "/wp-config.php.bak",
+        "/docker-compose.yml", "/.aws/credentials", "/package.json"
       ];
       const sensResults = await Promise.all(
         SENS_FILES.map(async (p) => {
@@ -909,13 +911,93 @@ export default function ScannerTab({ proxyOnline }) {
       log(`[+] Broken Links: ${broken.length} found`, broken.length > 0 ? C.red : C.green);
     } catch { setR("brokenlinks", { severity: "info", summary: "Error", lines: ["[-] Failed to check links"], recs: [] }); }
 
-    // 15. Scan Diff Engine
+    // 16. S3 Bucket Finder
+    markA("s3");
+    try {
+      const r = await apiGet("https://" + host, proxyOnline);
+      const html = r.body || "";
+      const s3Regex = /(?:https?:\/\/)?(?:[a-z0-9-]+\.)?s3(?:-[a-z0-9-]+)?\.amazonaws\.com\/?|([a-z0-9-]+)\.s3\.amazonaws\.com/gi;
+      const buckets = new Set();
+      let match;
+      while ((match = s3Regex.exec(html)) !== null) {
+        buckets.add(match[0]);
+      }
+      
+      const vulnerable = [];
+      for (const b of buckets) {
+        const u = b.startsWith("http") ? b : "https://" + b;
+        try {
+          const br = await apiGet(u, proxyOnline);
+          if (br.status === 200 && br.body.includes("<ListBucketResult")) vulnerable.push(u);
+        } catch {}
+      }
+
+      setR("s3", {
+        severity: vulnerable.length > 0 ? "critical" : (buckets.size > 0 ? "info" : "low"),
+        summary: vulnerable.length > 0 ? `${vulnerable.length} public buckets!` : `${buckets.size} buckets`,
+        lines: [
+          `S3 Bucket Finder`,
+          `[i] Found ${buckets.size} referenced buckets`,
+          ...Array.from(buckets).map(b => vulnerable.includes(b.startsWith("http") ? b : "https://"+b) ? `[!!] PUBLIC EXPOSURE: ${b}` : `[+] ${b} (secure)`),
+        ],
+        recs: vulnerable.length > 0 ? ["Restrict S3 bucket permissions (Block Public Access)"] : [],
+      });
+      log(`[+] S3 Buckets: ${buckets.size}${vulnerable.length > 0 ? ' (PUBLIC EXPOSURE!)' : ''}`, vulnerable.length > 0 ? C.red : C.blue);
+    } catch { setR("s3", { severity: "info", summary: "Error", lines: ["[-] Failed"], recs: [] }); }
+
+    // 17. Advanced DNS Brute-force
+    markA("dnsbrute");
+    try {
+      const DICT = ["dev", "test", "api", "staging", "admin", "sandbox", "beta", "old", "v1", "v2"];
+      const foundSub = [];
+      for (const sub of DICT) {
+        const target = `${sub}.${host}`;
+        const d = await dnsQ(target, "A");
+        if (d && d.Answer && d.Answer.length > 0) foundSub.push({ sub: target, ip: d.Answer[0].data });
+        await new Promise(res => setTimeout(res, 50));
+      }
+      setR("dnsbrute", {
+        severity: foundSub.length > 0 ? "medium" : "low",
+        summary: `${foundSub.length} subdomains found`,
+        lines: [
+          `Advanced DNS Brute-force`,
+          `[i] Tested ${DICT.length} common prefixes`,
+          ...foundSub.map(f => `[!] ${f.sub} ➔ ${f.ip}`)
+        ],
+        recs: foundSub.length > 0 ? ["Ensure dev/test environments require VPN or Authentication"] : []
+      });
+      log(`[+] DNS Brute: ${foundSub.length} found`, foundSub.length > 0 ? C.yellow : C.green);
+    } catch { setR("dnsbrute", { severity: "info", summary: "Error", lines: ["[-] Failed"], recs: [] }); }
+
+    // 18. Security Scorer & Scan Diff Engine
+    markA("score");
     markA("diff");
     try {
+      let scoreNum = 100;
+      Object.values(localResults).forEach(r => {
+        if (r.severity === "critical") scoreNum -= 25;
+        else if (r.severity === "high") scoreNum -= 15;
+        else if (r.severity === "medium") scoreNum -= 5;
+        else if (r.severity === "low") scoreNum -= 1;
+      });
+      scoreNum = Math.max(0, scoreNum);
+
+      setR("score", {
+        severity: scoreNum < 50 ? "high" : scoreNum < 80 ? "medium" : "low",
+        summary: `${scoreNum}/100`,
+        lines: [
+          `Security Score: ${scoreNum}/100`,
+          scoreNum >= 90 ? "[+] Excellent security posture" : scoreNum >= 70 ? "[i] Good, but needs improvements" : "[!] Poor security posture",
+        ],
+        recs: ["Fix high/critical vulnerabilities to improve your score"],
+      });
+
       const fullReport = {};
       Object.keys(localResults).forEach(k => {
         fullReport[k] = { severity: localResults[k].severity, summary: localResults[k].summary };
       });
+      fullReport._score = scoreNum;
+
       const resDiff = await fetch("/report-save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -925,17 +1007,19 @@ export default function ScannerTab({ proxyOnline }) {
       if (resDiff.prev) {
         const changes = [];
         for (const k of Object.keys(fullReport)) {
+          if (k === "_score") continue;
           if (!resDiff.prev[k]) changes.push(`[+] New finding category: ${k}`);
           else if (resDiff.prev[k].severity !== fullReport[k].severity) {
              changes.push(`[*] ${k}: ${resDiff.prev[k].severity} ➔ ${fullReport[k].severity}`);
           }
         }
         for (const k of Object.keys(resDiff.prev)) {
+          if (k === "_score") continue;
           if (!fullReport[k]) changes.push(`[-] Removed finding: ${k}`);
         }
         setR("diff", {
           severity: changes.length > 0 ? "info" : "low",
-          summary: changes.length > 0 ? `${changes.length} changes detected` : "No changes since last scan",
+          summary: changes.length > 0 ? `${changes.length} changes detected` : "No changes",
           lines: [
             `Scan Diff Engine`,
             `Previous scan: ${new Date(resDiff.prev_date * 1000).toLocaleString()}`,
@@ -944,7 +1028,7 @@ export default function ScannerTab({ proxyOnline }) {
           ],
           recs: []
         });
-        log(`[+] Diff: ${changes.length} changes`, C.blue);
+        log(`[+] Diff: ${changes.length} changes, Score: ${scoreNum}`, C.blue);
       } else {
         setR("diff", {
           severity: "info",
