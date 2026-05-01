@@ -268,29 +268,37 @@ http.createServer(async (req, res) => {
 
     const analyzeServerConfig = async (reqData, resData) => {
       try {
-        const apiKey = process.env.GEMINI_API_KEY;
-        if (!apiKey) return "AI analysis skipped: API key not configured.";
-        const { GoogleGenerativeAI } = await import("@google/generative-ai");
-        const genAI = new GoogleGenerativeAI(apiKey);
-
-        // Let's get the list of models just in case
-        let availableModels = [];
-        try {
-          const fetchObj = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-          const resModels = await fetchObj.json();
-          availableModels = resModels.models ? resModels.models.map(m => m.name) : [];
-          console.log('Available models:', availableModels);
-        } catch (e) { console.log('Could not fetch models list:', e); }
-
-        const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+        const apiKey = process.env.OPENROUTER_API_KEY;
+        if (!apiKey) return "AI analysis skipped: OPENROUTER_API_KEY not configured.";
+        
         const sysContext = "Ты — эксперт по безопасной настройке веб-серверов. Твоя задача — изучать HTTP-ответы и указывать разработчику на потенциальные утечки информации в заголовках (например, версии ПО) или отсутствие необходимых защитных политик. Ответы должны быть краткими, сугубо техническими и предлагать способы исправления конфигурации.";
-        const prompt = `${sysContext}\n\nRequest:\nMethod: ${reqData.method}\nURL: ${reqData.url}\nHeaders: ${JSON.stringify(reqData.headers)}\n\nResponse:\nStatus: ${resData.status}\nHeaders: ${JSON.stringify(resData.headers)}\nBody Sample (first 500 chars): ${String(resData.body).substring(0, 500)}`;
+        const prompt = `Request:\nMethod: ${reqData.method}\nURL: ${reqData.url}\nHeaders: ${JSON.stringify(reqData.headers)}\n\nResponse:\nStatus: ${resData.status}\nHeaders: ${JSON.stringify(resData.headers)}\nBody Sample (first 500 chars): ${String(resData.body).substring(0, 500)}`;
 
-        try {
-          const result = await model.generateContent(prompt);
-          return result.response.text();
-        } catch (modelErr) {
-          return `AI Analysis Failed: ${modelErr.message}\n\nAvailable Models:\n${availableModels.join("\n")}`;
+        const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${apiKey}`,
+            "Content-Type": "application/json"
+          },
+          body: JSON.stringify({
+            model: "google/gemini-2.0-flash-001",
+            messages: [
+              { role: "system", content: sysContext },
+              { role: "user", content: prompt }
+            ]
+          })
+        });
+
+        if (!response.ok) {
+          const errData = await response.text();
+          return `AI Analysis Failed: API Error ${response.status} - ${errData}`;
+        }
+
+        const result = await response.json();
+        if (result.choices && result.choices.length > 0 && result.choices[0].message) {
+          return result.choices[0].message.content;
+        } else {
+          return `AI Analysis Failed: Unexpected response format`;
         }
       } catch (err) {
         return `AI Analysis Failed: ${err.message}`;
