@@ -265,7 +265,42 @@ http.createServer(async (req, res) => {
     if (!SAFE.has(method)) { send(res, 400, { error: "Invalid HTTP method" }); return; }
     incStat.run("proxy_hits");
     db.prepare("INSERT INTO proxy_history (url, method) VALUES (?, ?)").run(payload.url, method);
-    proxyRequest(payload.url, method, payload.headers || {}, payload.body || null, res);
+    
+    const analyzeServerConfig = async (reqData, resData) => {
+      try {
+        const apiKey = process.env.GEMINI_API_KEY;
+        if (!apiKey) return "AI analysis skipped: API key not configured.";
+        const { GoogleGenerativeAI } = await import("@google/generative-ai");
+        const genAI = new GoogleGenerativeAI(apiKey);
+        const model = genAI.getGenerativeModel({
+          model: "gemini-1.5-flash",
+          systemInstruction: "Ты — эксперт по безопасной настройке веб-серверов. Твоя задача — изучать HTTP-ответы и указывать разработчику на потенциальные утечки информации в заголовках (например, версии ПО) или отсутствие необходимых защитных политик. Ответы должны быть краткими, сугубо техническими и предлагать способы исправления конфигурации"
+        });
+        const prompt = `Request:\nMethod: ${reqData.method}\nURL: ${reqData.url}\nHeaders: ${JSON.stringify(reqData.headers)}\n\nResponse:\nStatus: ${resData.status}\nHeaders: ${JSON.stringify(resData.headers)}\nBody Sample (first 500 chars): ${String(resData.body).substring(0, 500)}`;
+        const result = await model.generateContent(prompt);
+        return result.response.text();
+      } catch (err) {
+        return `AI Analysis Failed: ${err.message}`;
+      }
+    };
+
+    // Use a custom response handler for proxyRequest to inject AI analysis
+    const customRes = {
+      setHeader: res.setHeader.bind(res),
+      writeHead: res.writeHead.bind(res),
+      end: async (chunk) => {
+        try {
+          const resObj = JSON.parse(chunk);
+          const aiAnalysis = await analyzeServerConfig({ url: payload.url, method, headers: payload.headers || {} }, resObj);
+          resObj.aiAnalysis = aiAnalysis;
+          res.end(JSON.stringify(resObj));
+        } catch {
+          res.end(chunk);
+        }
+      }
+    };
+    
+    proxyRequest(payload.url, method, payload.headers || {}, payload.body || null, customRes);
     return;
   }
   // GET /portscan?host=...
