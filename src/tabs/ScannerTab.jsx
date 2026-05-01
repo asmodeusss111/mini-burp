@@ -4,8 +4,31 @@ import { apiGet, getHeaders, portScan, dnsQ, cleanHost, validateHost, sendReques
 import { Panel, Btn, Tag, Inp } from "../components/ui.jsx";
 
 function exportReport(domain, results, checks, format = "txt") {
-  let blob;
   const filename = `burp-report-${domain.replace(/\./g, "_")}`;
+  
+  if (format === "pdf") {
+    const payload = { target: domain, results: {} };
+    for (const c of checks) {
+      if (results[c.id]) payload.results[c.id] = { label: c.label, ...results[c.id] };
+    }
+    fetch("/report", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload)
+    })
+      .then(r => r.blob())
+      .then(blob => {
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `${filename}.pdf`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      })
+      .catch(e => console.error("PDF Export failed", e));
+    return;
+  }
+
+  let blob;
   if (format === "json") {
     const data = { target: domain, date: new Date().toISOString(), results: {} };
     for (const c of checks) { if (results[c.id]) data.results[c.id] = results[c.id]; }
@@ -717,6 +740,7 @@ export default function ScannerTab({ proxyOnline }) {
             <>
               <Btn onClick={() => exportReport(domain, results, CHECKS, "txt")} small>📥 TXT</Btn>
               <Btn onClick={() => exportReport(domain, results, CHECKS, "json")} small>{ } JSON</Btn>
+              <Btn onClick={() => exportReport(domain, results, CHECKS, "pdf")} small color={C.accent}>📑 PDF</Btn>
             </>
           )}
           {phase === "scanning" && (

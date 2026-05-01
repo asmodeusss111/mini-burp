@@ -7,6 +7,7 @@ import nodePath from "path";
 import { lookup } from "dns/promises";
 import { fileURLToPath } from "url";
 import Database from "better-sqlite3";
+import PDFDocument from "pdfkit";
 const __dirname = nodePath.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 8080;
 const MAX_BODY = 1 * 1024 * 1024; // 1 MB
@@ -333,6 +334,64 @@ http.createServer(async (req, res) => {
     incStat.run("fuzz_hits");
     db.prepare("INSERT INTO fuzz_history (url, payloads_count, results) VALUES (?, ?, ?)").run(fuzzUrl, payloads.length, JSON.stringify(results));
     send(res, 200, { results });
+    return;
+  }
+  // POST /report
+  if (path === "/report" && req.method === "POST") {
+    let payload;
+    try { payload = JSON.parse(body); } catch { send(res, 400, { error: "Invalid JSON body" }); return; }
+    if (!payload.target || !payload.results) { send(res, 400, { error: "Missing target or results" }); return; }
+    
+    secHeaders(res);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", `attachment; filename=miniburp-report-${payload.target.replace(/\./g, "_")}.pdf`);
+    
+    const doc = new PDFDocument({ margin: 50 });
+    doc.pipe(res);
+    
+    doc.fontSize(20).text("Mini Burp Security Report", { align: "center" });
+    doc.moveDown();
+    doc.fontSize(12).text(`Target: ${payload.target}`);
+    doc.text(`Date: ${new Date().toISOString()}`);
+    doc.moveDown(2);
+    
+    // Add summary graph/stats
+    let high = 0, medium = 0, low = 0, info = 0;
+    for (const r of Object.values(payload.results)) {
+      if (r.severity === "critical" || r.severity === "high") high++;
+      else if (r.severity === "medium") medium++;
+      else if (r.severity === "low") low++;
+      else info++;
+    }
+    
+    doc.fontSize(14).text("Summary");
+    doc.fontSize(10).fillColor("red").text(`Critical/High: ${high}`);
+    doc.fillColor("orange").text(`Medium: ${medium}`);
+    doc.fillColor("green").text(`Low: ${low}`);
+    doc.fillColor("gray").text(`Info: ${info}`);
+    doc.fillColor("black");
+    doc.moveDown(2);
+    
+    for (const [id, r] of Object.entries(payload.results)) {
+      doc.fontSize(14).fillColor("black").text(r.label || id);
+      const color = (r.severity === "critical" || r.severity === "high") ? "red" : (r.severity === "medium" ? "orange" : (r.severity === "low" ? "green" : "gray"));
+      doc.fontSize(10).fillColor(color).text(`Severity: ${r.severity.toUpperCase()} | ${r.summary}`);
+      doc.fillColor("black").moveDown(0.5);
+      if (r.lines) {
+        doc.font("Courier").fontSize(8);
+        for (const l of r.lines) doc.text(l.replace(/[\u2713\u2717\u2192\u26A0\u2022]/g, "*")); // Replace problematic unicode chars
+        doc.font("Helvetica").fontSize(10);
+      }
+      if (r.recs && r.recs.length > 0) {
+        doc.moveDown(0.5);
+        doc.fillColor("blue").text("Recommendations:");
+        for (const rec of r.recs) doc.text(`- ${rec}`);
+        doc.fillColor("black");
+      }
+      doc.moveDown();
+    }
+    
+    doc.end();
     return;
   }
   // GET /history?type=all|scans|proxy|fuzz&limit=50
