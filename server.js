@@ -49,6 +49,13 @@ db.exec(`
     results        TEXT,
     created_at     INTEGER DEFAULT (unixepoch())
   );
+
+  CREATE TABLE IF NOT EXISTS full_reports (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    host TEXT NOT NULL,
+    report TEXT,
+    created_at INTEGER DEFAULT (unixepoch())
+  );
 `);
 const incStat = db.prepare("UPDATE stats SET value = value + 1 WHERE key = ?");
 const getStat = db.prepare("SELECT value FROM stats WHERE key = ?");
@@ -394,6 +401,21 @@ http.createServer(async (req, res) => {
     doc.end();
     return;
   }
+
+  // POST /report-save
+  if (path === "/report-save" && req.method === "POST") {
+    let payload;
+    try { payload = JSON.parse(body); } catch { send(res, 400, { error: "Invalid JSON" }); return; }
+    const { host, report } = payload;
+    if (!host || !report) { send(res, 400, { error: "Missing host or report" }); return; }
+    
+    const prev = db.prepare("SELECT report, created_at FROM full_reports WHERE host = ? ORDER BY id DESC LIMIT 1").get(host);
+    db.prepare("INSERT INTO full_reports (host, report) VALUES (?, ?)").run(host, JSON.stringify(report));
+    
+    send(res, 200, { prev: prev ? JSON.parse(prev.report) : null, prev_date: prev ? prev.created_at : null });
+    return;
+  }
+
   // GET /history?type=all|scans|proxy|fuzz&limit=50
   if (path === "/history") {
     const type = parsed.searchParams.get("type") || "all";

@@ -794,6 +794,53 @@ export default function ScannerTab({ proxyOnline }) {
       }
     } catch { setR("whois", { severity: "info", summary: "Error", lines: ["[-] WHOIS error"], recs: [] }); }
 
+    // 15. Scan Diff Engine
+    markA("diff");
+    try {
+      const fullReport = {};
+      Object.keys(localResults).forEach(k => {
+        fullReport[k] = { severity: localResults[k].severity, summary: localResults[k].summary };
+      });
+      const resDiff = await fetch("/report-save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ host, report: fullReport })
+      }).then(r => r.json());
+
+      if (resDiff.prev) {
+        const changes = [];
+        for (const k of Object.keys(fullReport)) {
+          if (!resDiff.prev[k]) changes.push(`[+] New finding category: ${k}`);
+          else if (resDiff.prev[k].severity !== fullReport[k].severity) {
+             changes.push(`[*] ${k}: ${resDiff.prev[k].severity} ➔ ${fullReport[k].severity}`);
+          }
+        }
+        for (const k of Object.keys(resDiff.prev)) {
+          if (!fullReport[k]) changes.push(`[-] Removed finding: ${k}`);
+        }
+        setR("diff", {
+          severity: changes.length > 0 ? "info" : "low",
+          summary: changes.length > 0 ? `${changes.length} changes detected` : "No changes since last scan",
+          lines: [
+            `Scan Diff Engine`,
+            `Previous scan: ${new Date(resDiff.prev_date * 1000).toLocaleString()}`,
+            changes.length === 0 ? "[+] State is identical to previous scan" : `[i] Changes detected:`,
+            ...changes
+          ],
+          recs: []
+        });
+        log(`[+] Diff: ${changes.length} changes`, C.blue);
+      } else {
+        setR("diff", {
+          severity: "info",
+          summary: "Baseline saved",
+          lines: ["Scan Diff Engine", "[i] No previous scan found for baseline.", "[+] Saved as initial baseline."],
+          recs: []
+        });
+        log(`[+] Diff: Baseline saved`, C.blue);
+      }
+    } catch { setR("diff", { severity: "info", summary: "Error", lines: ["[-] Failed to compute diff"], recs: [] }); }
+
     log("[*] Scan complete!", C.accent);
     setPhase("done");
   }, [domain, proxyOnline]);
