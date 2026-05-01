@@ -73,6 +73,7 @@ export default function RepeaterTab({ proxyOnline }) {
         body: r.body || r.contents || "",
         headers: r.headers || {},
         ts: new Date().toLocaleTimeString(),
+        aiAnalysis: r.aiAnalysis || null,
       };
       setResp(resp);
       setHistory(h => [{ method, url, status: resp.status, time: resp.time }, ...h.slice(0, 9)]);
@@ -191,6 +192,14 @@ export default function RepeaterTab({ proxyOnline }) {
               </pre>
             ) : null}
           </div>
+          {response?.aiAnalysis && (
+            <div id="ai-analysis-container" style={{ padding: 12, borderTop: `1px solid ${C.border}`, background: C.panel }}>
+              <div style={{ color: C.accent, fontSize: 10, letterSpacing: 1, marginBottom: 8 }}>✨ AI SECURITY ANALYSIS</div>
+              <pre style={{ margin: 0, color: C.text, fontFamily: "monospace", fontSize: 11, whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
+                {response.aiAnalysis}
+              </pre>
+            </div>
+          )}
         </Panel>
       </div>
     </div>
