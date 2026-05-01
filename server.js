@@ -272,7 +272,7 @@ http.createServer(async (req, res) => {
         if (!apiKey) return "AI analysis skipped: API key not configured.";
         const { GoogleGenerativeAI } = await import("@google/generative-ai");
         const genAI = new GoogleGenerativeAI(apiKey);
-        
+
         // Let's get the list of models just in case
         let availableModels = [];
         try {
@@ -282,10 +282,10 @@ http.createServer(async (req, res) => {
           console.log('Available models:', availableModels);
         } catch (e) { console.log('Could not fetch models list:', e); }
 
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
         const sysContext = "Ты — эксперт по безопасной настройке веб-серверов. Твоя задача — изучать HTTP-ответы и указывать разработчику на потенциальные утечки информации в заголовках (например, версии ПО) или отсутствие необходимых защитных политик. Ответы должны быть краткими, сугубо техническими и предлагать способы исправления конфигурации.";
         const prompt = `${sysContext}\n\nRequest:\nMethod: ${reqData.method}\nURL: ${reqData.url}\nHeaders: ${JSON.stringify(reqData.headers)}\n\nResponse:\nStatus: ${resData.status}\nHeaders: ${JSON.stringify(resData.headers)}\nBody Sample (first 500 chars): ${String(resData.body).substring(0, 500)}`;
-        
+
         try {
           const result = await model.generateContent(prompt);
           return result.response.text();
