@@ -182,7 +182,7 @@ export default function ScannerTab({ proxyOnline }) {
         const sev = missing.length === 0 ? "low" : missing.length <= 2 ? "medium" : "high";
         setR("headers", {
           severity: sev,
-          summary: `${present.length}/${wanted.length} headers`,
+          summary: `${present.length}/${wanted.length} secure`,
           lines: [
             `HEAD https://${host}`,
             `[i] Server: ${h["server"] || "hidden"}`,
@@ -204,6 +204,54 @@ export default function ScannerTab({ proxyOnline }) {
         log("[!] Headers: need proxy", C.yellow);
       }
     } catch { setR("headers", { severity: "info", summary: "Error", lines: ["[-] Failed"], recs: [] }); }
+
+    // 4.5 Cookie Security Analyzer
+    markA("cookies");
+    try {
+      const hData = await getHeaders("https://" + host, proxyOnline);
+      if (hData && hData.headers) {
+        // Headers are lowercased by fetch/proxy
+        let setCookie = hData.headers["set-cookie"];
+        if (setCookie) {
+          if (!Array.isArray(setCookie)) setCookie = [setCookie];
+          const cookies = [];
+          for (const c of setCookie) {
+            const parts = c.split(";").map(p => p.trim());
+            const [nameVal, ...flags] = parts;
+            const name = nameVal.split("=")[0];
+            const isSecure = flags.some(f => f.toLowerCase() === "secure");
+            const isHttpOnly = flags.some(f => f.toLowerCase() === "httponly");
+            const sameSite = flags.find(f => f.toLowerCase().startsWith("samesite="))?.split("=")[1] || "None";
+            
+            let issues = [];
+            if (!isSecure) issues.push("Missing Secure");
+            if (!isHttpOnly) issues.push("Missing HttpOnly");
+            if (sameSite.toLowerCase() === "none" && !isSecure) issues.push("SameSite=None without Secure");
+            
+            cookies.push({ name, isSecure, isHttpOnly, sameSite, issues });
+          }
+          
+          const badCookies = cookies.filter(c => c.issues.length > 0);
+          setR("cookies", {
+            severity: badCookies.length > 0 ? "medium" : "low",
+            summary: badCookies.length > 0 ? `${badCookies.length} insecure cookies` : "All secure ✓",
+            lines: [
+              `Cookie Security Analyzer`,
+              `[i] Found ${cookies.length} Set-Cookie headers`,
+              badCookies.length === 0 ? "[+] All cookies have Secure and HttpOnly flags" : `[!] Insecure cookies detected:`,
+              ...cookies.map(c => `[${c.issues.length > 0 ? "!" : "+"}] ${c.name}: ${c.issues.length > 0 ? c.issues.join(", ") : "Secure ✓ (HttpOnly, Secure, SameSite=" + c.sameSite + ")"}`)
+            ],
+            recs: badCookies.length > 0 ? ["Add HttpOnly flag to prevent XSS theft", "Add Secure flag to ensure HTTPS transit", "Set SameSite=Lax or Strict"] : []
+          });
+          log(`[+] Cookies: ${badCookies.length > 0 ? badCookies.length + " insecure" : "Secure"}`, badCookies.length > 0 ? C.yellow : C.green);
+        } else {
+          setR("cookies", { severity: "info", summary: "No cookies", lines: ["[i] No Set-Cookie headers found"], recs: [] });
+          log(`[+] Cookies: None`, C.muted);
+        }
+      } else {
+        setR("cookies", { severity: "info", summary: "Failed", lines: ["[-] Failed to get headers"], recs: [] });
+      }
+    } catch { setR("cookies", { severity: "info", summary: "Error", lines: ["[-] Error"], recs: [] }); }
 
     // 5. Email
     markA("email");
@@ -236,26 +284,49 @@ export default function ScannerTab({ proxyOnline }) {
       log(`[+] Email: SPF:${hasSPF ? "✓" : "✗"} DKIM:${hasDKIM ? "✓" : "✗"} DMARC:${hasDMARC ? "✓" : "✗"}`, sev === "low" ? C.green : C.yellow);
     } catch { setR("email", { severity: "info", summary: "Error", lines: ["[-] DNS error"], recs: [] }); }
 
-    // 6. Subdomains
+    // 6. Subdomains & Takeover Check
     markA("subdomains");
     try {
       const data = await fetch(`https://crt.sh/?q=${encodeURIComponent("%" + host)}&output=json`)
         .then(r => r.json()).catch(() => null);
       const unique = data
-        ? [...new Set(data.map(e => e.name_value).filter(n => n.includes(host) && !n.includes("*")).sort())]
+        ? [...new Set(data.map(e => e.name_value.toLowerCase()).filter(n => n.includes(host) && !n.includes("*")).sort())]
         : [];
+
+      // Subdomain Takeover Check
+      const TAKEOVER_CNAMES = ["github.io", "s3.amazonaws.com", "herokudns.com", "azurewebsites.net", "zendesk.com", "readme.io", "myshopify.com"];
+      const takeovers = [];
+      const checked = unique.slice(0, 15); // limit to 15 to avoid timeouts
+      
+      for (const sub of checked) {
+        try {
+          const cname = await dnsQ(sub, "CNAME");
+          const cnameData = cname?.Answer?.[0]?.data;
+          if (cnameData && TAKEOVER_CNAMES.some(c => cnameData.includes(c))) {
+            const r = await apiGet("http://" + sub, proxyOnline);
+            if (r.status === 404 || r.status === 0 || r.body.includes("NoSuchBucket") || r.body.includes("There isn't a GitHub Pages site here")) {
+              takeovers.push({ sub, cname: cnameData });
+            }
+          }
+        } catch {}
+      }
+
       setR("subdomains", {
-        severity: unique.length > 10 ? "medium" : "info",
-        summary: `${unique.length} found`,
+        severity: takeovers.length > 0 ? "critical" : unique.length > 10 ? "medium" : "info",
+        summary: takeovers.length > 0 ? `${takeovers.length} vulnerable subdomains!` : `${unique.length} found`,
         lines: [
           `crt.sh: *.${host}`,
-          `[i] Total: ${unique.length}`,
-          ...unique.slice(0, 10).map(s => `[+] ${s}`),
+          `[i] Total: ${unique.length} (checked ${checked.length} for takeover)`,
+          takeovers.length > 0 ? `\n[!!] SUBDOMAIN TAKEOVER DETECTED [!!]` : "",
+          ...unique.slice(0, 10).map(s => {
+            const isVuln = takeovers.find(t => t.sub === s);
+            return isVuln ? `[!!] ${s} ➔ ${isVuln.cname} (VULNERABLE!)` : `[+] ${s}`;
+          }),
           unique.length > 10 ? `[i] ...+${unique.length - 10} more` : "",
         ].filter(Boolean),
-        recs: unique.length > 5 ? ["Audit each subdomain", "Disable unused"] : [],
+        recs: takeovers.length > 0 ? ["URGENT: Claim the dangling CNAME target or delete the DNS record immediately"] : unique.length > 5 ? ["Audit each subdomain", "Disable unused"] : [],
       });
-      log(`[+] Subdomains: ${unique.length}`, C.blue);
+      log(`[+] Subdomains: ${unique.length}${takeovers.length > 0 ? " (TAKEOVER VULN!)" : ""}`, takeovers.length > 0 ? C.red : C.blue);
     } catch { setR("subdomains", { severity: "info", summary: "Error", lines: ["[-] crt.sh unavailable"], recs: [] }); }
 
     // 7. Ports
