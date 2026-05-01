@@ -865,6 +865,50 @@ export default function ScannerTab({ proxyOnline }) {
       }
     } catch { setR("whois", { severity: "info", summary: "Error", lines: ["[-] WHOIS error"], recs: [] }); }
 
+    // 14.5 Broken Link & Resource Hijack
+    markA("brokenlinks");
+    try {
+      const r = await apiGet("https://" + host, proxyOnline);
+      const html = r.body || "";
+      const linkRegex = /(?:href|src)=["'](https?:\/\/[^"']+)["']/gi;
+      const externalLinks = new Set();
+      let match;
+      while ((match = linkRegex.exec(html)) !== null) {
+        try {
+          const u = new URL(match[1]);
+          if (u.hostname !== host && !u.hostname.endsWith("." + host)) {
+            externalLinks.add(match[1]);
+          }
+        } catch {}
+      }
+
+      const checkList = Array.from(externalLinks).slice(0, 15); // limit to 15 to avoid timeout
+      const broken = [];
+      for (const link of checkList) {
+        try {
+          const lr = await fetch(`/proxy?url=${encodeURIComponent(link)}`).then(res => res.json()).catch(() => null);
+          if (!lr || lr.status === 404 || lr.error) {
+            // Further verify it's really dead
+            broken.push(link);
+          }
+        } catch {}
+        await new Promise(res => setTimeout(res, 100));
+      }
+
+      setR("brokenlinks", {
+        severity: broken.length > 0 ? "high" : "info",
+        summary: broken.length > 0 ? `${broken.length} broken resources!` : `${checkList.length} checked OK`,
+        lines: [
+          `Broken Link & Resource Hijack`,
+          `[i] Found ${externalLinks.size} external references (audited ${checkList.length})`,
+          broken.length === 0 ? "[+] No broken resource hijacks found" : `[!] Broken external links detected:`,
+          ...broken.map(b => `[!!] DEAD LINK: ${b}`),
+        ],
+        recs: broken.length > 0 ? ["Remove broken links immediately to prevent domain hijacking", "Register expired domains if they belonged to you"] : [],
+      });
+      log(`[+] Broken Links: ${broken.length} found`, broken.length > 0 ? C.red : C.green);
+    } catch { setR("brokenlinks", { severity: "info", summary: "Error", lines: ["[-] Failed to check links"], recs: [] }); }
+
     // 15. Scan Diff Engine
     markA("diff");
     try {

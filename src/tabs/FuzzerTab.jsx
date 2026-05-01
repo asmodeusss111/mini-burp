@@ -8,12 +8,13 @@ const PRESETS = {
   xss: ["<script>alert(1)</script>", '"><img src=x onerror=alert(1)>', "javascript:alert(1)", "'><svg onload=alert(1)>", "<iframe src=javascript:alert(1)>", "<body onload=alert(1)>", "<img src=x onerror=alert('xss')>"],
   sqli: ["'", "' OR '1'='1", "' OR 1=1--", "\" OR \"1\"=\"1", "1; DROP TABLE users--", "1 UNION SELECT null--", "' AND SLEEP(5)--", "admin'--", "1' OR '1'='1"],
   passwords: ["password", "123456", "admin", "letmein", "welcome", "qwerty", "pass123", "admin123", "root", "toor", "password1", "monkey"],
+  ssrf: ["http://127.0.0.1", "http://localhost", "http://169.254.169.254/latest/meta-data/", "file:///etc/passwd", "http://[::1]", "http://0.0.0.0", "https://127.0.0.1"],
 };
 
 export default function FuzzerTab({ proxyOnline }) {
   const [url, setUrl] = useState("https://target.com/page?id=§1§");
   const [wordlistText, setWordlistText] = useState("");
-  const [preset, setPreset] = useState("paths");
+  const [preset, setPreset] = useState("auto");
   const [results, setResults] = useState([]);
   const [running, setRunning] = useState(false);
   const [filter, setFilter] = useState("");
@@ -23,9 +24,24 @@ export default function FuzzerTab({ proxyOnline }) {
   const startFuzz = async () => {
     if (!url.includes("§")) { alert("URL must contain §markers§"); return; }
     const baseUrl = url.includes("://") ? url : "https://" + url;
-    const payloads = wordlistText.trim()
-      ? wordlistText.split("\n").map(l => l.trim()).filter(Boolean)
-      : PRESETS[preset] || [];
+    
+    let payloads = [];
+    if (preset === "auto") {
+      const markerIndex = url.indexOf("§");
+      const qIndex = url.indexOf("?");
+      if (qIndex !== -1 && markerIndex > qIndex) {
+         const paramContext = url.slice(qIndex, markerIndex);
+         if (/url=|redirect=|path=|uri=|dest=|link=|file=|window=|next=/i.test(paramContext)) payloads = PRESETS.ssrf;
+         else if (/id=|page=|num=|count=|offset=|user_id=|group=|limit=/i.test(paramContext)) payloads = PRESETS.sqli;
+         else payloads = PRESETS.xss;
+      } else {
+         payloads = PRESETS.paths;
+      }
+    } else {
+      payloads = wordlistText.trim()
+        ? wordlistText.split("\n").map(l => l.trim()).filter(Boolean)
+        : PRESETS[preset] || [];
+    }
     if (payloads.length === 0) return;
 
     setRunning(true);
@@ -88,9 +104,11 @@ export default function FuzzerTab({ proxyOnline }) {
             onChange={e => { setPreset(e.target.value); setWordlistText(""); }}
             style={{ background: C.bg, border: `1px solid ${C.border}`, color: C.text, padding: "6px 8px", borderRadius: 4, fontFamily: "monospace", fontSize: 11 }}
           >
+            <option value="auto">✨ Smart Auto</option>
             <option value="paths">Paths</option>
             <option value="xss">XSS</option>
             <option value="sqli">SQLi</option>
+            <option value="ssrf">SSRF</option>
             <option value="passwords">Passwords</option>
             <option value="custom">Custom</option>
           </select>
