@@ -265,14 +265,14 @@ http.createServer(async (req, res) => {
     if (!SAFE.has(method)) { send(res, 400, { error: "Invalid HTTP method" }); return; }
     incStat.run("proxy_hits");
     db.prepare("INSERT INTO proxy_history (url, method) VALUES (?, ?)").run(payload.url, method);
-    
+
     const analyzeServerConfig = async (reqData, resData) => {
       try {
         const apiKey = process.env.GEMINI_API_KEY;
         if (!apiKey) return "AI analysis skipped: API key not configured.";
         const { GoogleGenerativeAI } = await import("@google/generative-ai");
         const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
         const sysContext = "Ты — эксперт по безопасной настройке веб-серверов. Твоя задача — изучать HTTP-ответы и указывать разработчику на потенциальные утечки информации в заголовках (например, версии ПО) или отсутствие необходимых защитных политик. Ответы должны быть краткими, сугубо техническими и предлагать способы исправления конфигурации.";
         const prompt = `${sysContext}\n\nRequest:\nMethod: ${reqData.method}\nURL: ${reqData.url}\nHeaders: ${JSON.stringify(reqData.headers)}\n\nResponse:\nStatus: ${resData.status}\nHeaders: ${JSON.stringify(resData.headers)}\nBody Sample (first 500 chars): ${String(resData.body).substring(0, 500)}`;
         const result = await model.generateContent(prompt);
@@ -297,7 +297,7 @@ http.createServer(async (req, res) => {
         }
       }
     };
-    
+
     proxyRequest(payload.url, method, payload.headers || {}, payload.body || null, customRes);
     return;
   }
@@ -386,25 +386,25 @@ http.createServer(async (req, res) => {
     let payload;
     try { payload = JSON.parse(body); } catch { send(res, 400, { error: "Invalid JSON body" }); return; }
     if (!payload.target || !payload.results) { send(res, 400, { error: "Missing target or results" }); return; }
-    
+
     secHeaders(res);
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", `attachment; filename=miniburp-report-${payload.target.replace(/\./g, "_")}.pdf`);
-    
+
     const doc = new PDFDocument({ margin: 50 });
     doc.pipe(res);
-    
+
     doc.fontSize(20).text("Mini Burp Security Report", { align: "center" });
     doc.moveDown();
     doc.fontSize(12).text(`Target: ${payload.target}`);
     doc.text(`Date: ${new Date().toISOString()}`);
     if (payload.results.score) {
-       doc.moveDown(1);
-       doc.fontSize(16).fillColor(payload.results.score.severity === "high" ? "red" : payload.results.score.severity === "medium" ? "orange" : "green").text(`Security Score: ${payload.results.score.summary}`);
-       doc.fillColor("black").fontSize(12);
+      doc.moveDown(1);
+      doc.fontSize(16).fillColor(payload.results.score.severity === "high" ? "red" : payload.results.score.severity === "medium" ? "orange" : "green").text(`Security Score: ${payload.results.score.summary}`);
+      doc.fillColor("black").fontSize(12);
     }
     doc.moveDown(2);
-    
+
     // Add summary graph/stats
     let high = 0, medium = 0, low = 0, info = 0;
     for (const r of Object.values(payload.results)) {
@@ -413,7 +413,7 @@ http.createServer(async (req, res) => {
       else if (r.severity === "low") low++;
       else info++;
     }
-    
+
     doc.fontSize(14).text("Summary");
     doc.fontSize(10).fillColor("red").text(`Critical/High: ${high}`);
     doc.fillColor("orange").text(`Medium: ${medium}`);
@@ -421,7 +421,7 @@ http.createServer(async (req, res) => {
     doc.fillColor("gray").text(`Info: ${info}`);
     doc.fillColor("black");
     doc.moveDown(2);
-    
+
     for (const [id, r] of Object.entries(payload.results)) {
       doc.fontSize(14).fillColor("black").text(r.label || id);
       const color = (r.severity === "critical" || r.severity === "high") ? "red" : (r.severity === "medium" ? "orange" : (r.severity === "low" ? "green" : "gray"));
@@ -440,7 +440,7 @@ http.createServer(async (req, res) => {
       }
       doc.moveDown();
     }
-    
+
     doc.end();
     return;
   }
@@ -451,10 +451,10 @@ http.createServer(async (req, res) => {
     try { payload = JSON.parse(body); } catch { send(res, 400, { error: "Invalid JSON" }); return; }
     const { host, report } = payload;
     if (!host || !report) { send(res, 400, { error: "Missing host or report" }); return; }
-    
+
     const prev = db.prepare("SELECT report, created_at FROM full_reports WHERE host = ? ORDER BY id DESC LIMIT 1").get(host);
     db.prepare("INSERT INTO full_reports (host, report) VALUES (?, ?)").run(host, JSON.stringify(report));
-    
+
     send(res, 200, { prev: prev ? JSON.parse(prev.report) : null, prev_date: prev ? prev.created_at : null });
     return;
   }
@@ -480,12 +480,12 @@ http.createServer(async (req, res) => {
       send(res, 401, { error: "Unauthorized" });
       return;
     }
-    
+
     if (path === "/api/admin/stats" && req.method === "GET") {
       const stats = Object.fromEntries(allStats.all().map(r => [r.key, r.value]));
       const recentScans = db.prepare("SELECT * FROM scan_history ORDER BY id DESC LIMIT 100").all();
       const recentReports = db.prepare("SELECT id, host, created_at, length(report) as size, json_extract(report, '$._score') as score FROM full_reports ORDER BY id DESC LIMIT 100").all();
-      
+
       let sevStats = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
       let avgScore = 0;
       let totalScore = 0;
@@ -495,18 +495,18 @@ http.createServer(async (req, res) => {
         try {
           const parsed = JSON.parse(r.report);
           if (parsed._score !== undefined) {
-             totalScore += parsed._score;
-             scoredReports++;
+            totalScore += parsed._score;
+            scoredReports++;
           }
           for (const key of Object.keys(parsed)) {
             if (key === "_score") continue;
             const s = parsed[key].severity;
             if (sevStats[s] !== undefined) sevStats[s]++;
           }
-        } catch {}
+        } catch { }
       }
       if (scoredReports > 0) avgScore = Math.round(totalScore / scoredReports);
-      
+
       const osData = {
         uptime: process.uptime(),
         memory: process.memoryUsage(),
