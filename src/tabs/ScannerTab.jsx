@@ -399,7 +399,7 @@ export default function ScannerTab({ proxyOnline }) {
       log(`[+] WAF: ${waf || "NOT DETECTED"}`, waf ? C.green : (status === 200 ? C.red : C.yellow));
     } catch { setR("waf", { severity: "info", summary: "Error", lines: ["[-] Failed"], recs: [] }); }
 
-    // 11. IP Reputation
+    // 11. Infrastructure Map & IP Reputation
     markA("ip");
     try {
       const d = await dnsQ(host, "A");
@@ -411,20 +411,26 @@ export default function ScannerTab({ proxyOnline }) {
           try { rep = JSON.parse(r.body); } catch {}
         }
       }
+      const cdnNode = rep?.hosting ? rep?.org : null;
+      const infraMap = `[User] ──> ${cdnNode ? `[CDN: ${cdnNode}] ──> ` : ""}[ISP: ${rep?.isp || "?"}] ──> [Target: ${ip}]`;
+      
       setR("ip", {
         severity: rep?.proxy ? "high" : "info",
         summary: `${ip} → ${rep?.country || "?"}`,
         lines: [
+          `Infrastructure Map:`,
+          `  ${infraMap}`,
+          ``,
           `IP: ${ip}`,
-          `[i] ${rep?.country}, ${rep?.city}`,
+          `[i] Location: ${rep?.country}, ${rep?.city}`,
           `[i] ISP: ${rep?.isp}`,
           `[i] ASN: ${rep?.as}`,
-          rep?.proxy ? "[!!] PROXY FLAG!" : "[+] No proxy",
-          rep?.hosting ? "[i] Hosting/CDN" : "[+] Regular IP",
+          rep?.proxy ? "[!!] PROXY FLAG DETECTED!" : "[+] No known proxy",
+          rep?.hosting ? "[i] Hosting/CDN Provider" : "[+] Regular IP",
         ],
-        recs: rep?.proxy ? ["Check traffic — suspicious"] : [],
+        recs: rep?.proxy ? ["Check traffic — suspicious proxy/VPN IP"] : [],
       });
-      log(`[+] IP: ${ip} (${rep?.country || "?"})`, C.blue);
+      log(`[+] Infra Map: ${ip} (${rep?.country || "?"})`, C.blue);
     } catch { setR("ip", { severity: "info", summary: "Error", lines: ["[-] Error"], recs: [] }); }
 
     // 12. JS Library Auditor (CVE)
