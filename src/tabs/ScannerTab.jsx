@@ -343,6 +343,7 @@ export default function ScannerTab({ proxyOnline }) {
         setR("tech", {
           severity: found.some(t => t.risk === "medium") ? "medium" : "low",
           summary: found.map(t => `${t.n}${t.ver ? ` (${t.ver})` : ""}`).join(", ") || "Hidden",
+          raw: found,
           lines: [
             `Fingerprint: ${host}`,
             `[i] Found: ${found.length}`,
@@ -426,46 +427,71 @@ export default function ScannerTab({ proxyOnline }) {
       log(`[+] IP: ${ip} (${rep?.country || "?"})`, C.blue);
     } catch { setR("ip", { severity: "info", summary: "Error", lines: ["[-] Error"], recs: [] }); }
 
-    // 12. CVE — search by detected technologies, not domain name
+    // 12. JS Library Auditor (CVE)
     markA("cve");
     try {
-      // Get tech detection results (from earlier scan)
       const techResults = localResults["tech"];
-      if (!techResults || !techResults.summary || techResults.summary === "Hidden") {
+      const rawTechs = techResults?.raw || [];
+      if (rawTechs.length === 0) {
         setR("cve", {
           severity: "info",
           summary: "No techs detected",
-          lines: ["[i] CVE check requires technology detection", "[i] Run Tech fingerprinting first"],
+          lines: ["[i] Library Auditor requires technology detection", "[i] Run Tech fingerprinting first"],
           recs: ["Enable Tech check for CVE analysis"],
         });
         log(`[i] CVE: skipped (no tech detected)`, C.muted);
       } else {
-        // Extract technology names from summary
-        const techs = techResults.summary.match(/[\w\.\s\-]+/g)?.slice(0, 2) || [];
-        const kw = techs[0] || "software";
-        const data = await fetch(
-          `https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(kw)}&resultsPerPage=5`,
-          { headers: { Accept: "application/json" } }
-        ).then(r => r.json()).catch(() => null);
-        const items = data?.vulnerabilities || [];
-        const crit = items.filter(v => (v.cve?.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore || 0) >= 9);
+        const allVulns = [];
+        for (const t of rawTechs) {
+          if (t.n !== "WordPress" && t.n !== "PHP" && t.ver) {
+            // Use OSV API for JS libraries (React, Vue, jQuery, etc.)
+            try {
+              const pkgName = t.n.toLowerCase();
+              const osvData = await fetch("https://api.osv.dev/v1/query", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ version: t.ver, package: { name: pkgName, ecosystem: "npm" } })
+              }).then(r => r.json()).catch(() => null);
+              if (osvData?.vulns) {
+                osvData.vulns.forEach(v => allVulns.push({ tech: t.n, ver: t.ver, id: v.aliases?.[0] || v.id, details: v.summary || "Vulnerability found", cvss: 7 }));
+              }
+            } catch {}
+          } else {
+            // Use NVD for generic/backend tech or if no version
+            try {
+              const kw = t.n;
+              const nvd = await fetch(`https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(kw)}&resultsPerPage=3`, { headers: { Accept: "application/json" } }).then(r => r.json()).catch(() => null);
+              const items = nvd?.vulnerabilities || [];
+              items.forEach(v => {
+                const sc = v.cve?.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore || 0;
+                if (sc >= 7) allVulns.push({ tech: t.n, ver: t.ver, id: v.cve?.id, details: `CVSS Score: ${sc}`, cvss: sc });
+              });
+            } catch {}
+          }
+          await new Promise(r => setTimeout(r, 200)); // Rate limit delay
+        }
+
+        const uniqueVulns = [];
+        const seen = new Set();
+        for (const v of allVulns) {
+          if (!seen.has(v.id)) { seen.add(v.id); uniqueVulns.push(v); }
+        }
+
+        const crit = uniqueVulns.filter(v => v.cvss >= 9);
         setR("cve", {
-          severity: crit.length > 0 ? "critical" : items.length > 0 ? "medium" : "low",
-          summary: `${items.length} found${crit.length > 0 ? `, ${crit.length} critical` : ""}`,
+          severity: crit.length > 0 ? "critical" : uniqueVulns.length > 0 ? "medium" : "low",
+          summary: `${uniqueVulns.length} CVEs found in ${rawTechs.length} libs`,
           lines: [
-            `NVD search: "${kw}"`,
-            `[i] Total: ${data?.totalResults || 0}`,
-            items.length === 0 ? "[+] No known CVEs" : `[!] ${items.length} CVEs found:`,
-            ...items.slice(0, 4).map(v => {
-              const sc = v.cve?.metrics?.cvssMetricV31?.[0]?.cvssData?.baseScore || "?";
-              return `[${sc >= 9 ? "!!" : sc >= 7 ? "!" : "i"}] ${v.cve?.id} (CVSS ${sc})`;
-            }),
+            `JS Library Auditor (OSV/NVD)`,
+            `[i] Checked ${rawTechs.length} technologies`,
+            uniqueVulns.length === 0 ? "[+] No known critical/high CVEs found" : `[!] ${uniqueVulns.length} vulnerabilities detected:`,
+            ...uniqueVulns.map(v => `[${v.cvss >= 9 ? "!!" : "!"}] ${v.tech}${v.ver ? ` (v${v.ver})` : ""}: ${v.id} - ${String(v.details).slice(0, 60)}`),
           ],
-          recs: crit.length > 0 ? ["URGENT: Update to patched version", "Apply security patches immediately"] : items.length > 0 ? ["Review and update affected software"] : [],
+          recs: uniqueVulns.length > 0 ? ["Update affected libraries to patched versions", "Check OSV/NVD databases for remediation details"] : [],
         });
-        log(`[+] CVE: ${items.length}${crit.length > 0 ? `, critical: ${crit.length}` : ""}`, crit.length > 0 ? C.red : C.green);
+        log(`[+] JS Auditor (CVE): ${uniqueVulns.length} found`, uniqueVulns.length > 0 ? C.red : C.green);
       }
-    } catch { setR("cve", { severity: "info", summary: "Error", lines: ["[-] NVD unavailable"], recs: [] }); }
+    } catch { setR("cve", { severity: "info", summary: "Error", lines: ["[-] Auditor unavailable"], recs: [] }); }
 
     // 13. Security.txt
     markA("sectxt");
