@@ -303,10 +303,11 @@ export default function ScannerTab({ proxyOnline }) {
         const found = [];
 
         // Regex patterns with word boundaries to avoid false positives
-        if (/wp-content|wp-includes|\/wp-/i.test(html)) found.push({ n: "WordPress", risk: "medium", ver: html.match(/wp_version['":\s]*['"]*(\d+\.\d+)/i)?.[1] });
+        const isReact = /(__NEXT_DATA__|__NEXT_PAGE__|next\/react|__REACT_DEVTOOLS__|React)/i.test(html) && /react/i.test(html);
+        if (/wp-content|wp-includes|\/wp-/i.test(html) && !isReact) found.push({ n: "WordPress", risk: "medium", ver: html.match(/wp_version['":\s]*['"]*(\d+\.\d+)/i)?.[1] });
         if (/__NEXT_DATA__|__NEXT_PAGE__|next\/react/i.test(html)) found.push({ n: "Next.js", risk: "low" });
         if (/__NUXT__|nuxt\/dist/i.test(html)) found.push({ n: "Nuxt.js", risk: "low" });
-        if (/(__REACT_DEVTOOLS__|React)/i.test(html) && /react/i.test(html)) found.push({ n: "React", risk: "low" });
+        if (isReact) found.push({ n: "React", risk: "low" });
         if (/\bvue\b|\/dist\/vue\.|window\.__VUE__/i.test(html)) found.push({ n: "Vue.js", risk: "low" });
         if (/angular\.|ng-app|ng-bind/i.test(html)) found.push({ n: "Angular", risk: "low" });
         if (/jquery['\"]?:['\"]?[\d.]+|jquery-(\d+\.\d+)/i.test(html)) found.push({ n: "jQuery", risk: "low" });

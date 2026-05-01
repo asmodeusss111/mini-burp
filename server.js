@@ -7,14 +7,12 @@ import nodePath from "path";
 import { lookup } from "dns/promises";
 import { fileURLToPath } from "url";
 import Database from "better-sqlite3";
-
 const __dirname = nodePath.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 8080;
 const MAX_BODY = 1 * 1024 * 1024; // 1 MB
 const DIST_DIR = nodePath.join(__dirname, "dist");
 const DATA_DIR = process.env.DATA_DIR || __dirname;
 const DB_PATH = nodePath.join(DATA_DIR, "miniburp.db");
-
 // ── Database ──────────────────────────────────────────────────────────────────
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
 const db = new Database(DB_PATH);
@@ -30,14 +28,12 @@ db.exec(`
   INSERT OR IGNORE INTO stats VALUES ('header_hits', 0);
   INSERT OR IGNORE INTO stats VALUES ('blocked_ssrf', 0);
   INSERT OR IGNORE INTO stats VALUES ('rate_limited', 0);
-
   CREATE TABLE IF NOT EXISTS scan_history (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     host       TEXT NOT NULL,
     open_ports TEXT,
     created_at INTEGER DEFAULT (unixepoch())
   );
-
   CREATE TABLE IF NOT EXISTS proxy_history (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     url        TEXT NOT NULL,
@@ -45,7 +41,6 @@ db.exec(`
     status     INTEGER,
     created_at INTEGER DEFAULT (unixepoch())
   );
-
   CREATE TABLE IF NOT EXISTS fuzz_history (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
     url            TEXT NOT NULL,
@@ -54,16 +49,13 @@ db.exec(`
     created_at     INTEGER DEFAULT (unixepoch())
   );
 `);
-
 const incStat = db.prepare("UPDATE stats SET value = value + 1 WHERE key = ?");
 const getStat = db.prepare("SELECT value FROM stats WHERE key = ?");
 const allStats = db.prepare("SELECT key, value FROM stats");
 function stat(key) { return getStat.get(key)?.value ?? 0; }
-
 // ── SSRF guard ────────────────────────────────────────────────────────────────
 const PRIVATE_IP_RE = /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|::1$|fc00:|fe80:)/i;
 const BLOCKED_HOSTS = new Set(["localhost", "metadata.google.internal", "169.254.169.254"]);
-
 async function isBlockedTarget(hostname) {
   if (!hostname) return true;
   const h = hostname.toLowerCase();
@@ -79,19 +71,16 @@ async function isBlockedTarget(hostname) {
   }
   return false;
 }
-
 function isValidUrl(raw) {
   try {
     const u = new URL(raw);
     return u.protocol === "http:" || u.protocol === "https:";
   } catch { return false; }
 }
-
 // ── Rate limiter ──────────────────────────────────────────────────────────────
 const rateLimits = new Map();
 const RATE_WINDOW = 60_000;
 const RATE_LIMITS = { "/proxy": 200, "/request": 100, "/portscan": 10, "/headers": 100, "/fuzz": 50, "/ssl": 20 };
-
 function checkRate(ip, route) {
   const limit = RATE_LIMITS[route];
   if (!limit) return false;
@@ -104,10 +93,8 @@ function checkRate(ip, route) {
   return false;
 }
 setInterval(() => { const now = Date.now(); for (const [k, v] of rateLimits) if (now > v.resetAt) rateLimits.delete(k); }, 300_000);
-
 // ── Headers ───────────────────────────────────────────────────────────────────
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
-
 function secHeaders(res) {
   res.setHeader("Access-Control-Allow-Origin", CORS_ORIGIN);
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, HEAD, OPTIONS");
@@ -115,31 +102,28 @@ function secHeaders(res) {
   res.setHeader("X-Content-Type-Options", "nosniff");
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Strict-Transport-Security", "max-age=63072000");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.railway.app; connect-src 'self' https://*.railway.app; style-src 'self' 'unsafe-inline'; img-src 'self' data:;");
+  res.setHeader("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
 }
-
 function send(res, status, body) {
   secHeaders(res);
   res.writeHead(status, { "Content-Type": "application/json" });
   res.end(JSON.stringify(body));
 }
-
 // ── Proxy ─────────────────────────────────────────────────────────────────────
 const HOP_BY_HOP = new Set(["host", "connection", "keep-alive", "transfer-encoding", "te", "upgrade", "proxy-authorization", "content-length"]);
-
 function proxyRequest(targetUrl, method, reqHeaders, body, res, _redirectCount = 0) {
   if (_redirectCount > 5) {
     send(res, 502, { error: "Too many redirects", url: targetUrl });
     return;
   }
-
   const parsed = new URL(targetUrl);
   const lib = parsed.protocol === "https:" ? https : http;
-
   const safeHeaders = {};
   for (const [k, v] of Object.entries(reqHeaders || {})) {
     if (!HOP_BY_HOP.has(k.toLowerCase())) safeHeaders[k] = v;
   }
-
   const options = {
     hostname: parsed.hostname,
     port: parsed.port || (parsed.protocol === "https:" ? 443 : 80),
@@ -148,7 +132,6 @@ function proxyRequest(targetUrl, method, reqHeaders, body, res, _redirectCount =
     headers: { ...safeHeaders, host: parsed.hostname },
     timeout: 15000,
   };
-
   const preq = lib.request(options, pres => {
     if ([301, 302, 303, 307, 308].includes(pres.statusCode) && pres.headers.location) {
       let nextMethod = method;
@@ -164,7 +147,6 @@ function proxyRequest(targetUrl, method, reqHeaders, body, res, _redirectCount =
         // invalid location header
       }
     }
-
     secHeaders(res);
     res.writeHead(200, { "Content-Type": "application/json" });
     let data = "";
@@ -175,13 +157,11 @@ function proxyRequest(targetUrl, method, reqHeaders, body, res, _redirectCount =
       res.end(JSON.stringify({ status: pres.statusCode, statusText: pres.statusMessage, headers: respHeaders, body: data, url: targetUrl }));
     });
   });
-
   preq.on("error", () => send(res, 200, { error: "Request failed", url: targetUrl }));
   preq.on("timeout", () => preq.destroy());
   if (body) preq.write(body);
   preq.end();
 }
-
 // ── Port scanner ──────────────────────────────────────────────────────────────
 function scanPort(host, port, timeout = 2000) {
   return new Promise(resolve => {
@@ -193,7 +173,6 @@ function scanPort(host, port, timeout = 2000) {
     sock.connect(port, host);
   });
 }
-
 function checkTLS(host, port = 443, timeout = 5000) {
   return new Promise((resolve) => {
     const socket = tls.connect({
@@ -208,7 +187,6 @@ function checkTLS(host, port = 443, timeout = 5000) {
       const cipher = socket.getCipher();
       const validTo = cert.valid_to ? new Date(cert.valid_to).getTime() : 0;
       const daysLeft = validTo ? Math.floor((validTo - Date.now()) / (1000 * 60 * 60 * 24)) : 0;
-
       resolve({
         valid: socket.authorized || false,
         protocol,
@@ -221,31 +199,29 @@ function checkTLS(host, port = 443, timeout = 5000) {
       });
       socket.destroy();
     });
-
     socket.on("timeout", () => {
       socket.destroy();
       resolve({ error: "timeout" });
     });
-
     socket.on("error", (err) => {
       socket.destroy();
       resolve({ error: err.message });
     });
   });
 }
-
 const PORTS = [21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 3306, 3389, 5432, 6379, 8080, 8443, 8888, 27017];
-
 // ── Server ────────────────────────────────────────────────────────────────────
 http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") { secHeaders(res); res.writeHead(204); res.end(); return; }
-
   const clientIP = req.socket.remoteAddress || "unknown";
   const parsed = new URL(req.url, "http://localhost");
   const path = parsed.pathname;
-
+  // Basic WAF for explicit XSS payloads in URL
+  if (/(%3C|<)script(%3E|>)/i.test(parsed.search) || /javascript:/i.test(parsed.search) || /on\w+=/i.test(parsed.search)) {
+    send(res, 403, { error: "WAF: XSS payload detected" });
+    return;
+  }
   if (checkRate(clientIP, path)) { incStat.run("rate_limited"); send(res, 429, { error: "Too many requests. Try again in a minute." }); return; }
-
   // Read body with 1 MB limit
   let body = "", bodySize = 0, aborted = false;
   req.on("data", chunk => {
@@ -255,7 +231,6 @@ http.createServer(async (req, res) => {
   });
   await new Promise(r => req.on("end", r));
   if (aborted) return;
-
   // GET /proxy?url=...
   if (path === "/proxy") {
     const target = parsed.searchParams.get("url");
@@ -266,7 +241,6 @@ http.createServer(async (req, res) => {
     proxyRequest(target, "GET", {}, null, res);
     return;
   }
-
   // POST /request
   if (path === "/request" && req.method === "POST") {
     let payload;
@@ -281,7 +255,6 @@ http.createServer(async (req, res) => {
     proxyRequest(payload.url, method, payload.headers || {}, payload.body || null, res);
     return;
   }
-
   // GET /portscan?host=...
   if (path === "/portscan") {
     const host = parsed.searchParams.get("host");
@@ -296,7 +269,6 @@ http.createServer(async (req, res) => {
     res.end(JSON.stringify({ host, results }));
     return;
   }
-
   // GET /ssl?host=...
   if (path === "/ssl") {
     const host = parsed.searchParams.get("host");
@@ -306,7 +278,6 @@ http.createServer(async (req, res) => {
     send(res, 200, result);
     return;
   }
-
   // GET /headers?url=...
   if (path === "/headers") {
     const target = parsed.searchParams.get("url");
@@ -316,27 +287,22 @@ http.createServer(async (req, res) => {
     proxyRequest(target, "HEAD", {}, null, res);
     return;
   }
-
   // POST /fuzz  { url: "https://target.com/§payload§", payloads: [] }
   if (path === "/fuzz" && req.method === "POST") {
     let payload;
     try { payload = JSON.parse(body); } catch { send(res, 400, { error: "Invalid JSON" }); return; }
-
     const { url: fuzzUrl, payloads } = payload;
     if (!fuzzUrl || typeof fuzzUrl !== "string") { send(res, 400, { error: "Missing url" }); return; }
     if (!Array.isArray(payloads) || payloads.length === 0) { send(res, 400, { error: "Missing payloads array" }); return; }
     if (payloads.length > 100) { send(res, 400, { error: "Max 100 payloads per request" }); return; }
-
     // Validate the base URL (with a placeholder substituted)
     const testUrl = fuzzUrl.replace(/§[^§]*§/, "test");
     if (!isValidUrl(testUrl)) { send(res, 400, { error: "Invalid url pattern" }); return; }
     if (await isBlockedTarget(new URL(testUrl).hostname)) { send(res, 403, { error: "Target not allowed" }); return; }
-
     const results = [];
     for (const p of payloads) {
       const actualUrl = fuzzUrl.replace(/§[^§]*§/g, encodeURIComponent(String(p)));
       if (!isValidUrl(actualUrl)) { results.push({ payload: p, error: "Invalid URL" }); continue; }
-
       const t = Date.now();
       try {
         await new Promise((resolve, reject) => {
@@ -362,16 +328,13 @@ http.createServer(async (req, res) => {
           req2.end();
         });
       } catch { results.push({ payload: p, error: "Exception", status: 0, length: 0, time: 0 }); }
-
       await new Promise(r => setTimeout(r, 100));
     }
-
     incStat.run("fuzz_hits");
     db.prepare("INSERT INTO fuzz_history (url, payloads_count, results) VALUES (?, ?, ?)").run(fuzzUrl, payloads.length, JSON.stringify(results));
     send(res, 200, { results });
     return;
   }
-
   // GET /history?type=all|scans|proxy|fuzz&limit=50
   if (path === "/history") {
     const type = parsed.searchParams.get("type") || "all";
@@ -383,19 +346,16 @@ http.createServer(async (req, res) => {
     send(res, 200, result);
     return;
   }
-
   // GET /whois?domain=example.com
   if (path === "/whois") {
     const domain = parsed.searchParams.get("domain");
     if (!domain) { send(res, 400, { error: "Missing domain" }); return; }
     const cleanDomain = domain.replace(/^https?:\/\//, "").split("/")[0].toLowerCase();
     if (await isBlockedTarget(cleanDomain)) { send(res, 403, { error: "Target not allowed" }); return; }
-
     // Build candidates: try full hostname, then strip subdomains one by one
     const parts = cleanDomain.split(".");
     const candidates = [];
     for (let i = 0; i <= parts.length - 2; i++) candidates.push(parts.slice(i).join("."));
-
     const rdapFetch = (d) => new Promise((resolve, reject) => {
       const req2 = https.get({
         hostname: "rdap.org",
@@ -410,7 +370,6 @@ http.createServer(async (req, res) => {
       req2.on("error", reject);
       req2.on("timeout", () => { req2.destroy(); reject(new Error("timeout")); });
     });
-
     try {
       for (const candidate of candidates) {
         const rdapData = await rdapFetch(candidate);
@@ -422,7 +381,6 @@ http.createServer(async (req, res) => {
     }
     return;
   }
-
   // GET /health
   if (path === "/health") {
     const s = Object.fromEntries(allStats.all().map(r => [r.key, r.value]));
@@ -437,13 +395,19 @@ http.createServer(async (req, res) => {
     });
     return;
   }
-
   // Serve static files from dist/
   if (req.method === "GET" && fs.existsSync(DIST_DIR)) {
     const safeSuffix = nodePath.normalize("/" + path.replace(/^\/+/, ""));
     let filePath = nodePath.join(DIST_DIR, safeSuffix);
     // prevent path traversal
     if (!filePath.startsWith(DIST_DIR + nodePath.sep) && filePath !== DIST_DIR) { send(res, 403, { error: "Forbidden" }); return; }
+    // Fix false positives: Return 404 for sensitive files/admin paths instead of serving SPA index
+    if (/^\/(wp-admin|wp-login\.php|\.env|\.git|\.aws|\.ssh|config\.php|xmlrpc\.php|wp-json|readme\.html)/i.test(path)) {
+      if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
+        send(res, 404, { error: "Not found" });
+        return;
+      }
+    }
     if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
       filePath = nodePath.join(DIST_DIR, "index.html");
     }
@@ -457,9 +421,7 @@ http.createServer(async (req, res) => {
     fs.createReadStream(filePath).pipe(res);
     return;
   }
-
   send(res, 404, { error: "Not found", routes: ["/proxy?url=", "/request (POST)", "/portscan?host=", "/headers?url=", "/fuzz (POST)", "/health"] });
-
 }).listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Mini Burp running on port ${PORT}`);
   console.log(`   GET  /proxy?url=https://example.com`);
@@ -467,6 +429,5 @@ http.createServer(async (req, res) => {
   console.log(`   GET  /portscan?host=example.com`);
   console.log(`   GET  /headers?url=https://example.com`);
 });
-
 process.on("SIGTERM", () => process.exit(0));
 process.on("SIGINT", () => process.exit(0));
