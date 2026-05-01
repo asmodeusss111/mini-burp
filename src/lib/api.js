@@ -19,16 +19,9 @@ export async function checkProxy() {
 // Always returns: { status, headers, body, url, error? }
 export async function apiGet(url, local) {
   try {
-    if (local) {
-      const r = await fetch(`/proxy?url=${encodeURIComponent(url)}`).then(r => r.json()).catch(() => null);
-      if (!r) return { status: 0, headers: {}, body: "", url, error: "Request failed" };
-      return { status: r.status || 200, headers: r.headers || {}, body: r.body || "", url: r.url || url };
-    }
-    // allorigins.win fallback
-    const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`).then(r => r.json()).catch(() => null);
-    if (!r || r.status === "error") return { status: 0, headers: {}, body: "", url, error: r?.message || "API error" };
-    // allorigins returns: { status: "success", contents, status_code, ... }
-    return { status: r.status_code || 0, headers: r.headers || {}, body: r.contents || "", url };
+    const r = await fetch(`/proxy?url=${encodeURIComponent(url)}`).then(r => r.json()).catch(() => null);
+    if (!r) return { status: 0, headers: {}, body: "", url, error: "Request failed" };
+    return { status: r.status || 200, headers: r.headers || {}, body: r.body || "", url: r.url || url };
   } catch (e) {
     return { status: 0, headers: {}, body: "", url, error: e.message };
   }
@@ -54,18 +47,12 @@ export async function portScan(host, local) {
   return { results };
 }
 
-export async function sendRequest(payload, local) {
-  if (local) {
-    return fetch(`/request`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-    }).then(r => r.json()).catch(e => ({ error: e.message }));
-  }
-  const r = await fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(payload.url)}`)
-    .then(r => r.json())
-    .catch(() => null);
-  return { status: 200, headers: {}, body: r?.contents || "", url: payload.url };
+export async function sendRequest(payload) {
+  return fetch(`/request`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  }).then(r => r.json()).catch(e => ({ error: e.message }));
 }
 
 export async function whoisLookup(domain) {

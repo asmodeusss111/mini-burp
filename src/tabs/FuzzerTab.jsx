@@ -42,7 +42,7 @@ export default function FuzzerTab({ proxyOnline }) {
 
       const t = Date.now();
       try {
-        const r = await sendRequest({ url: testUrl, method: "GET", headers: {} }, proxyOnline);
+        const r = await sendRequest({ url: testUrl, method: "GET", headers: {} });
         const elapsed = Date.now() - t;
         setResults(prev => [...prev, {
           id: crypto.randomUUID(),

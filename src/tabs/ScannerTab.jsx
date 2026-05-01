@@ -57,6 +57,11 @@ export default function ScannerTab({ proxyOnline }) {
   const runScan = useCallback(async () => {
     if (!domain.trim()) return;
     setPhase("scanning"); setRes({}); setLogs([]); setActive(new Set()); setSel(null); setSslProgress(0);
+    const localResults = {};
+    const setR = (id, d) => {
+      localResults[id] = d;
+      setRes(p => ({ ...p, [id]: d }));
+    };
     const host = cleanHost(domain);
     const hostErr = validateHost(host);
     if (hostErr) {
@@ -113,43 +118,25 @@ export default function ScannerTab({ proxyOnline }) {
     log("[*] SSL Labs (~60s)...", C.muted);
     sslAbort.current = new AbortController();
     try {
-      await fetch(
-        `https://api.ssllabs.com/api/v3/analyze?host=${encodeURIComponent(host)}&startNew=on&all=done`,
-        { headers: { Accept: "application/json" }, signal: sslAbort.current.signal }
-      ).then(r => r.json());
-
-      let ssl = null;
-      for (let i = 0; i < 20; i++) {
-        await new Promise(r => setTimeout(r, 4000));
-        setSslProgress(i + 1);
-        ssl = await fetch(
-          `https://api.ssllabs.com/api/v3/analyze?host=${encodeURIComponent(host)}&all=done`,
-          { headers: { Accept: "application/json" }, signal: sslAbort.current.signal }
-        ).then(r => r.json()).catch(() => null);
-        if (ssl?.status === "READY" || ssl?.status === "ERROR") break;
-      }
-      const eps = ssl?.endpoints || [];
-      const grades = eps.map(e => e.grade).filter(Boolean).sort();
-      const best = grades.length > 0 ? grades[0] : null;
-      const sev = best === null ? "info" : { "A+": "low", A: "low", B: "medium", C: "high", D: "critical", F: "critical" }[best] || "medium";
+      const ssl = await fetch(`/ssl?host=${encodeURIComponent(host)}`).then(r => r.json());
+      if (ssl.error) throw new Error(ssl.error);
+      const sev = ssl.valid ? "low" : "high";
       setR("ssl", {
         severity: sev,
-        summary: best ? `Grade: ${best}` : "Timeout/Error",
+        summary: ssl.valid ? `Valid (${ssl.daysLeft}d left)` : "Invalid/Untrusted",
         lines: [
-          `SSL Labs: ${host}`,
-          best ? `[+] Grade: ${best}` : `[!] Analysis timeout or error`,
-          ...eps.slice(0, 3).map(e => `[i] ${e.ipAddress}: ${e.grade || "?"} ${e.statusMessage || ""}`),
+          `TLS: ${host}`,
+          `[i] Protocol: ${ssl.protocol}`,
+          `[i] Cipher: ${ssl.cipher}`,
+          `[i] Issuer: ${ssl.issuer}`,
+          `[i] Subject: ${ssl.subject}`,
+          ssl.valid ? `[+] Valid for ${ssl.daysLeft} days` : "[-] Untrusted or expired certificate",
         ],
-        recs: best && best.startsWith("A") ? ["Consider HSTS preloading"] : best ? ["Update TLS", "Disable TLS 1.0/1.1"] : ["Retry SSL Labs test"],
-        link: `https://www.ssllabs.com/ssltest/analyze.html?d=${host}`,
+        recs: ssl.valid ? [] : ["Renew SSL certificate", "Check certificate chain"],
       });
-      log(`[+] SSL: ${best ? `Grade ${best}` : "Timeout"}`, sev === "low" ? C.green : sev === "info" ? C.yellow : C.red);
+      log(`[+] SSL: ${ssl.valid ? "Valid" : "Invalid"}`, ssl.valid ? C.green : C.red);
     } catch (e) {
-      if (e.name !== "AbortError") {
-        setR("ssl", { severity: "info", summary: e.message, lines: [`[-] ${e.message}`], recs: [], link: `https://www.ssllabs.com/ssltest/analyze.html?d=${host}` });
-      } else {
-        setR("ssl", { severity: "info", summary: "Cancelled", lines: ["[i] SSL scan cancelled"], recs: [], link: `https://www.ssllabs.com/ssltest/analyze.html?d=${host}` });
-      }
+      setR("ssl", { severity: "info", summary: e.message, lines: [`[-] ${e.message}`], recs: [] });
     }
     setSslProgress(0);
 
@@ -354,13 +341,17 @@ export default function ScannerTab({ proxyOnline }) {
       let waf = null;
       const body = r.body?.toLowerCase() || "";
       const status = r.status || 0;
+      const h = r.headers || {};
+      const serverH = (h["server"] || "").toLowerCase();
 
-      // Check for WAF response patterns: high status codes + error pages
-      if (status === 403 || status === 406 || status === 429 || status === 503) {
-        // Blocked by WAF (check which one)
-        if (body.includes("cloudflare")) waf = "Cloudflare";
-        else if (body.includes("sucuri")) waf = "Sucuri";
-        else if (body.includes("imperva")) waf = "Imperva";
+      // Check for WAF response patterns via headers
+      if (h["cf-ray"] || serverH.includes("cloudflare")) waf = "Cloudflare";
+      else if (h["x-sucuri-id"] || h["x-sucuri-cache"] || serverH.includes("sucuri")) waf = "Sucuri";
+      else if (h["x-amz-cf-id"] || h["x-waf-event-info"]) waf = "AWS WAF";
+      else if (h["x-cdn"]) waf = "Generic CDN/WAF";
+      else if (status === 403 || status === 406 || status === 429 || status === 503) {
+        // Blocked by WAF (fallback check body)
+        if (body.includes("imperva")) waf = "Imperva";
         else if (body.includes("akamai")) waf = "Akamai";
         else if (body.includes("mod_security")) waf = "ModSecurity";
         else waf = "Unknown WAF";
@@ -388,10 +379,13 @@ export default function ScannerTab({ proxyOnline }) {
     try {
       const d = await dnsQ(host, "A");
       const ip = d?.Answer?.[0]?.data;
-      const rep = ip
-        ? await fetch(`https://ip-api.com/json/${ip}?fields=status,country,city,isp,org,as,proxy,hosting`)
-            .then(r => r.json()).catch(() => null)
-        : null;
+      let rep = null;
+      if (ip) {
+        const r = await fetch(`/proxy?url=${encodeURIComponent(`http://ip-api.com/json/${ip}?fields=status,country,city,isp,org,as,proxy,hosting`)}`).then(res => res.json()).catch(() => null);
+        if (r && r.body) {
+          try { rep = JSON.parse(r.body); } catch {}
+        }
+      }
       setR("ip", {
         severity: rep?.proxy ? "high" : "info",
         summary: `${ip} → ${rep?.country || "?"}`,
@@ -412,7 +406,7 @@ export default function ScannerTab({ proxyOnline }) {
     markA("cve");
     try {
       // Get tech detection results (from earlier scan)
-      const techResults = results.tech;
+      const techResults = localResults["tech"];
       if (!techResults || !techResults.summary || techResults.summary === "Hidden") {
         setR("cve", {
           severity: "info",
@@ -626,6 +620,9 @@ export default function ScannerTab({ proxyOnline }) {
     // 19. Sensitive Files
     markA("sensitive");
     try {
+      const baseReq = await apiGet("https://" + host + "/", proxyOnline);
+      const baseSize = baseReq.body?.length || 0;
+
       const SENS_FILES = [
         "/.env", "/.git/config", "/.htaccess", "/web.config",
         "/phpinfo.php", "/.DS_Store", "/config.php", "/wp-config.php.bak",
@@ -633,7 +630,10 @@ export default function ScannerTab({ proxyOnline }) {
       const sensResults = await Promise.all(
         SENS_FILES.map(async (p) => {
           const r = await apiGet("https://" + host + p, proxyOnline);
-          const found = r.status === 200 && r.body.length > 10;
+          const ctype = r.headers?.["content-type"] || "";
+          const isHtml = ctype.toLowerCase().includes("text/html");
+          const sizeDiff = Math.abs((r.body?.length || 0) - baseSize);
+          const found = r.status === 200 && !isHtml && sizeDiff > 500;
           return { path: p, status: r.status, found };
         })
       );

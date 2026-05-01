@@ -113,14 +113,12 @@ export default function InterceptorTab({ proxyOnline }) {
       const t = Date.now();
 
       try {
-        const r = await (proxyOnline
-          ? fetch(`/proxy?url=${encodeURIComponent(url)}`).then(r => r.json())
-          : fetch(`https://api.allorigins.win/get?url=${encodeURIComponent(url)}`).then(r => r.json())
-        );
+        const r = await fetch(`/proxy?url=${encodeURIComponent(url)}`).then(r => r.json());
         const elapsed = Date.now() - t;
-        const status = proxyOnline ? (r?.status || 200) : (r?.status?.http_code || 200);
-        const body = proxyOnline ? (r?.body || "") : (r?.contents || "");
-        const interesting = INTERESTING_PATHS.has(path);
+        const status = r?.status || 200;
+        const body = r?.body || "";
+        const contentType = r?.headers?.["content-type"] || "";
+        const interesting = INTERESTING_PATHS.has(path) || (status === 200 && !contentType.toLowerCase().includes("text/html"));
 
         setLog(l => [...l, {
           id: crypto.randomUUID(),

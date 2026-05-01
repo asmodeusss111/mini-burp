@@ -1,18 +1,19 @@
-import http     from "http";
-import https    from "https";
-import net      from "net";
-import fs       from "fs";
+import http from "http";
+import https from "https";
+import net from "net";
+import tls from "tls";
+import fs from "fs";
 import nodePath from "path";
 import { lookup } from "dns/promises";
 import { fileURLToPath } from "url";
 import Database from "better-sqlite3";
 
 const __dirname = nodePath.dirname(fileURLToPath(import.meta.url));
-const PORT      = process.env.PORT || 8080;
-const MAX_BODY  = 1 * 1024 * 1024; // 1 MB
-const DIST_DIR  = nodePath.join(__dirname, "dist");
-const DATA_DIR  = process.env.DATA_DIR || __dirname;
-const DB_PATH   = nodePath.join(DATA_DIR, "miniburp.db");
+const PORT = process.env.PORT || 8080;
+const MAX_BODY = 1 * 1024 * 1024; // 1 MB
+const DIST_DIR = nodePath.join(__dirname, "dist");
+const DATA_DIR = process.env.DATA_DIR || __dirname;
+const DB_PATH = nodePath.join(DATA_DIR, "miniburp.db");
 
 // ── Database ──────────────────────────────────────────────────────────────────
 if (!fs.existsSync(DATA_DIR)) fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -87,9 +88,9 @@ function isValidUrl(raw) {
 }
 
 // ── Rate limiter ──────────────────────────────────────────────────────────────
-const rateLimits  = new Map();
+const rateLimits = new Map();
 const RATE_WINDOW = 60_000;
-const RATE_LIMITS = { "/proxy": 200, "/request": 100, "/portscan": 10, "/headers": 100, "/fuzz": 50 };
+const RATE_LIMITS = { "/proxy": 200, "/request": 100, "/portscan": 10, "/headers": 100, "/fuzz": 50, "/ssl": 20 };
 
 function checkRate(ip, route) {
   const limit = RATE_LIMITS[route];
@@ -102,18 +103,18 @@ function checkRate(ip, route) {
   entry.count++;
   return false;
 }
-setInterval(() => { const now = Date.now(); for (const [k,v] of rateLimits) if (now > v.resetAt) rateLimits.delete(k); }, 300_000);
+setInterval(() => { const now = Date.now(); for (const [k, v] of rateLimits) if (now > v.resetAt) rateLimits.delete(k); }, 300_000);
 
 // ── Headers ───────────────────────────────────────────────────────────────────
 const CORS_ORIGIN = process.env.CORS_ORIGIN || "*";
 
 function secHeaders(res) {
-  res.setHeader("Access-Control-Allow-Origin",  CORS_ORIGIN);
+  res.setHeader("Access-Control-Allow-Origin", CORS_ORIGIN);
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, HEAD, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type, Accept");
-  res.setHeader("X-Content-Type-Options",       "nosniff");
-  res.setHeader("X-Frame-Options",              "DENY");
-  res.setHeader("Referrer-Policy",              "no-referrer");
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("X-Frame-Options", "DENY");
+  res.setHeader("Referrer-Policy", "no-referrer");
 }
 
 function send(res, status, body) {
@@ -123,11 +124,16 @@ function send(res, status, body) {
 }
 
 // ── Proxy ─────────────────────────────────────────────────────────────────────
-const HOP_BY_HOP = new Set(["host","connection","keep-alive","transfer-encoding","te","upgrade","proxy-authorization","content-length"]);
+const HOP_BY_HOP = new Set(["host", "connection", "keep-alive", "transfer-encoding", "te", "upgrade", "proxy-authorization", "content-length"]);
 
-function proxyRequest(targetUrl, method, reqHeaders, body, res) {
+function proxyRequest(targetUrl, method, reqHeaders, body, res, _redirectCount = 0) {
+  if (_redirectCount > 5) {
+    send(res, 502, { error: "Too many redirects", url: targetUrl });
+    return;
+  }
+
   const parsed = new URL(targetUrl);
-  const lib    = parsed.protocol === "https:" ? https : http;
+  const lib = parsed.protocol === "https:" ? https : http;
 
   const safeHeaders = {};
   for (const [k, v] of Object.entries(reqHeaders || {})) {
@@ -136,14 +142,29 @@ function proxyRequest(targetUrl, method, reqHeaders, body, res) {
 
   const options = {
     hostname: parsed.hostname,
-    port:     parsed.port || (parsed.protocol === "https:" ? 443 : 80),
-    path:     (parsed.pathname + parsed.search) || "/",
-    method:   method || "GET",
-    headers:  { ...safeHeaders, host: parsed.hostname },
-    timeout:  15000,
+    port: parsed.port || (parsed.protocol === "https:" ? 443 : 80),
+    path: (parsed.pathname + parsed.search) || "/",
+    method: method || "GET",
+    headers: { ...safeHeaders, host: parsed.hostname },
+    timeout: 15000,
   };
 
   const preq = lib.request(options, pres => {
+    if ([301, 302, 303, 307, 308].includes(pres.statusCode) && pres.headers.location) {
+      let nextMethod = method;
+      let nextBody = body;
+      if ([301, 302, 303].includes(pres.statusCode)) {
+        nextMethod = "GET";
+        nextBody = null;
+      }
+      try {
+        const redirectUrl = new URL(pres.headers.location, targetUrl).href;
+        return proxyRequest(redirectUrl, nextMethod, reqHeaders, nextBody, res, _redirectCount + 1);
+      } catch (e) {
+        // invalid location header
+      }
+    }
+
     secHeaders(res);
     res.writeHead(200, { "Content-Type": "application/json" });
     let data = "";
@@ -168,20 +189,60 @@ function scanPort(host, port, timeout = 2000) {
     sock.setTimeout(timeout);
     sock.on("connect", () => { sock.destroy(); resolve({ port, status: "open" }); });
     sock.on("timeout", () => { sock.destroy(); resolve({ port, status: "closed" }); });
-    sock.on("error",   () => { sock.destroy(); resolve({ port, status: "closed" }); });
+    sock.on("error", () => { sock.destroy(); resolve({ port, status: "closed" }); });
     sock.connect(port, host);
   });
 }
 
-const PORTS = [21,22,23,25,53,80,110,143,443,445,3306,3389,5432,6379,8080,8443,8888,27017];
+function checkTLS(host, port = 443, timeout = 5000) {
+  return new Promise((resolve) => {
+    const socket = tls.connect({
+      host,
+      port,
+      servername: host,
+      timeout,
+      rejectUnauthorized: false
+    }, () => {
+      const cert = socket.getPeerCertificate(true);
+      const protocol = socket.getProtocol();
+      const cipher = socket.getCipher();
+      const validTo = cert.valid_to ? new Date(cert.valid_to).getTime() : 0;
+      const daysLeft = validTo ? Math.floor((validTo - Date.now()) / (1000 * 60 * 60 * 24)) : 0;
+
+      resolve({
+        valid: socket.authorized || false,
+        protocol,
+        cipher: cipher.name,
+        issuer: cert.issuer?.O,
+        subject: cert.subject?.CN,
+        validTo: cert.valid_to,
+        daysLeft,
+        error: socket.authorizationError
+      });
+      socket.destroy();
+    });
+
+    socket.on("timeout", () => {
+      socket.destroy();
+      resolve({ error: "timeout" });
+    });
+
+    socket.on("error", (err) => {
+      socket.destroy();
+      resolve({ error: err.message });
+    });
+  });
+}
+
+const PORTS = [21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 3306, 3389, 5432, 6379, 8080, 8443, 8888, 27017];
 
 // ── Server ────────────────────────────────────────────────────────────────────
 http.createServer(async (req, res) => {
   if (req.method === "OPTIONS") { secHeaders(res); res.writeHead(204); res.end(); return; }
 
   const clientIP = req.socket.remoteAddress || "unknown";
-  const parsed   = new URL(req.url, "http://localhost");
-  const path     = parsed.pathname;
+  const parsed = new URL(req.url, "http://localhost");
+  const path = parsed.pathname;
 
   if (checkRate(clientIP, path)) { incStat.run("rate_limited"); send(res, 429, { error: "Too many requests. Try again in a minute." }); return; }
 
@@ -212,7 +273,7 @@ http.createServer(async (req, res) => {
     try { payload = JSON.parse(body); } catch { send(res, 400, { error: "Invalid JSON body" }); return; }
     if (!payload.url || !isValidUrl(payload.url)) { send(res, 400, { error: "Invalid or missing url" }); return; }
     if (await isBlockedTarget(new URL(payload.url).hostname)) { incStat.run("blocked_ssrf"); send(res, 403, { error: "Target not allowed" }); return; }
-    const SAFE = new Set(["GET","POST","PUT","DELETE","PATCH","HEAD","OPTIONS"]);
+    const SAFE = new Set(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]);
     const method = (payload.method || "GET").toUpperCase();
     if (!SAFE.has(method)) { send(res, 400, { error: "Invalid HTTP method" }); return; }
     incStat.run("proxy_hits");
@@ -233,6 +294,16 @@ http.createServer(async (req, res) => {
     const openPorts = results.filter(r => r.status === "open").map(r => r.port);
     db.prepare("INSERT INTO scan_history (host, open_ports) VALUES (?, ?)").run(host, JSON.stringify(openPorts));
     res.end(JSON.stringify({ host, results }));
+    return;
+  }
+
+  // GET /ssl?host=...
+  if (path === "/ssl") {
+    const host = parsed.searchParams.get("host");
+    if (!host) { send(res, 400, { error: "Missing host parameter" }); return; }
+    if (await isBlockedTarget(host)) { send(res, 403, { error: "Target not allowed" }); return; }
+    const result = await checkTLS(host);
+    send(res, 200, result);
     return;
   }
 
@@ -303,12 +374,12 @@ http.createServer(async (req, res) => {
 
   // GET /history?type=all|scans|proxy|fuzz&limit=50
   if (path === "/history") {
-    const type  = parsed.searchParams.get("type") || "all";
+    const type = parsed.searchParams.get("type") || "all";
     const limit = Math.min(parseInt(parsed.searchParams.get("limit") || "50", 10), 200);
     const result = {};
     if (type === "all" || type === "scans") result.scans = db.prepare("SELECT id,host,open_ports,created_at FROM scan_history ORDER BY id DESC LIMIT ?").all(limit);
     if (type === "all" || type === "proxy") result.proxy = db.prepare("SELECT id,url,method,status,created_at FROM proxy_history ORDER BY id DESC LIMIT ?").all(limit);
-    if (type === "all" || type === "fuzz")  result.fuzz  = db.prepare("SELECT id,url,payloads_count,created_at FROM fuzz_history ORDER BY id DESC LIMIT ?").all(limit);
+    if (type === "all" || type === "fuzz") result.fuzz = db.prepare("SELECT id,url,payloads_count,created_at FROM fuzz_history ORDER BY id DESC LIMIT ?").all(limit);
     send(res, 200, result);
     return;
   }
@@ -355,9 +426,9 @@ http.createServer(async (req, res) => {
   // GET /health
   if (path === "/health") {
     const s = Object.fromEntries(allStats.all().map(r => [r.key, r.value]));
-    const recentScans   = db.prepare("SELECT host, open_ports, created_at FROM scan_history  ORDER BY id DESC LIMIT 5").all();
-    const recentProxy   = db.prepare("SELECT url, method, created_at FROM proxy_history ORDER BY id DESC LIMIT 5").all();
-    const recentFuzz    = db.prepare("SELECT url, payloads_count, created_at FROM fuzz_history  ORDER BY id DESC LIMIT 5").all();
+    const recentScans = db.prepare("SELECT host, open_ports, created_at FROM scan_history  ORDER BY id DESC LIMIT 5").all();
+    const recentProxy = db.prepare("SELECT url, method, created_at FROM proxy_history ORDER BY id DESC LIMIT 5").all();
+    const recentFuzz = db.prepare("SELECT url, payloads_count, created_at FROM fuzz_history  ORDER BY id DESC LIMIT 5").all();
     send(res, 200, {
       ok: true,
       uptime: Math.floor(process.uptime()),
@@ -377,9 +448,11 @@ http.createServer(async (req, res) => {
       filePath = nodePath.join(DIST_DIR, "index.html");
     }
     const ext = nodePath.extname(filePath).toLowerCase();
-    const mime = { ".html": "text/html", ".js": "application/javascript", ".css": "text/css",
-                   ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon",
-                   ".json": "application/json", ".woff2": "font/woff2" }[ext] || "application/octet-stream";
+    const mime = {
+      ".html": "text/html", ".js": "application/javascript", ".css": "text/css",
+      ".png": "image/png", ".svg": "image/svg+xml", ".ico": "image/x-icon",
+      ".json": "application/json", ".woff2": "font/woff2"
+    }[ext] || "application/octet-stream";
     res.writeHead(200, { "Content-Type": mime });
     fs.createReadStream(filePath).pipe(res);
     return;
@@ -396,4 +469,4 @@ http.createServer(async (req, res) => {
 });
 
 process.on("SIGTERM", () => process.exit(0));
-process.on("SIGINT",  () => process.exit(0));
+process.on("SIGINT", () => process.exit(0));

@@ -63,7 +63,7 @@ export default function RepeaterTab({ proxyOnline }) {
       }
     });
     try {
-      const r = await sendRequest({ url: parsedUrl.href, method, headers, body: body || null }, proxyOnline);
+      const r = await sendRequest({ url: parsedUrl.href, method, headers, body: body || null });
       const elapsed = Date.now() - start;
       const resp = {
         status: r.status || 200,
