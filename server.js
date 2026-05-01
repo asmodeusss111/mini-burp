@@ -272,11 +272,26 @@ http.createServer(async (req, res) => {
         if (!apiKey) return "AI analysis skipped: API key not configured.";
         const { GoogleGenerativeAI } = await import("@google/generative-ai");
         const genAI = new GoogleGenerativeAI(apiKey);
-        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash-latest" });
+        
+        // Let's get the list of models just in case
+        let availableModels = [];
+        try {
+          const fetchObj = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+          const resModels = await fetchObj.json();
+          availableModels = resModels.models ? resModels.models.map(m => m.name) : [];
+          console.log('Available models:', availableModels);
+        } catch (e) { console.log('Could not fetch models list:', e); }
+
+        const model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
         const sysContext = "Ты — эксперт по безопасной настройке веб-серверов. Твоя задача — изучать HTTP-ответы и указывать разработчику на потенциальные утечки информации в заголовках (например, версии ПО) или отсутствие необходимых защитных политик. Ответы должны быть краткими, сугубо техническими и предлагать способы исправления конфигурации.";
         const prompt = `${sysContext}\n\nRequest:\nMethod: ${reqData.method}\nURL: ${reqData.url}\nHeaders: ${JSON.stringify(reqData.headers)}\n\nResponse:\nStatus: ${resData.status}\nHeaders: ${JSON.stringify(resData.headers)}\nBody Sample (first 500 chars): ${String(resData.body).substring(0, 500)}`;
-        const result = await model.generateContent(prompt);
-        return result.response.text();
+        
+        try {
+          const result = await model.generateContent(prompt);
+          return result.response.text();
+        } catch (modelErr) {
+          return `AI Analysis Failed: ${modelErr.message}\n\nAvailable Models:\n${availableModels.join("\n")}`;
+        }
       } catch (err) {
         return `AI Analysis Failed: ${err.message}`;
       }
