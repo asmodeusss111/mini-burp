@@ -110,7 +110,10 @@ export default function AdminTab() {
     <div style={{ minHeight: "100vh", background: C.bg, color: C.text, padding: 20, fontFamily: "monospace" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, borderBottom: `1px solid ${C.border}`, paddingBottom: 10 }}>
         <h2><span style={{ color: C.accent }}>BURP</span> ADMIN DASHBOARD</h2>
-        <Btn onClick={() => { setAuth(false); localStorage.removeItem("adminPass"); }} small>Logout</Btn>
+        <div style={{ display: "flex", gap: 10 }}>
+          <Btn onClick={() => window.location.hash = ""} small color={C.blue}>🏠 Home</Btn>
+          <Btn onClick={() => { setAuth(false); localStorage.removeItem("adminPass"); }} small>Logout</Btn>
+        </div>
       </div>
 
       <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 20 }}>
