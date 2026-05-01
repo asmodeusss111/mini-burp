@@ -973,20 +973,52 @@ export default function ScannerTab({ proxyOnline }) {
     markA("score");
     markA("diff");
     try {
-      let scoreNum = 100;
-      Object.values(localResults).forEach(r => {
-        if (r.severity === "critical") scoreNum -= 25;
-        else if (r.severity === "high") scoreNum -= 15;
-        else if (r.severity === "medium") scoreNum -= 5;
-        else if (r.severity === "low") scoreNum -= 1;
+      let scoreNum = 0;
+      let bonuses = 0;
+      let penaltySum = 0;
+      let penaltyReasons = [];
+      let sslBonus = false;
+
+      // Base Score & Bonuses
+      if (localResults.ssl && localResults.ssl.lines && localResults.ssl.lines.some(l => l.includes("[+] Valid"))) {
+        scoreNum += 40;
+        bonuses += 40;
+        sslBonus = true;
+      }
+      if (localResults.headers && localResults.headers.lines) {
+        const secureCount = localResults.headers.lines.filter(l => l.startsWith("[+]")).length;
+        scoreNum += secureCount * 5;
+        bonuses += secureCount * 5;
+      }
+      if (localResults.email && localResults.email.lines && localResults.email.lines.some(l => l.includes("[+]"))) {
+        scoreNum += 10;
+        bonuses += 10;
+      }
+
+      // Penalties (only real findings)
+      Object.keys(localResults).forEach(k => {
+        if (["waf", "headers", "ssl", "email", "tech", "whois", "diff", "score", "dns", "dnsbrute", "robots", "ip", "cors", "clickjack"].includes(k)) return;
+        const r = localResults[k];
+        if (r.severity === "critical") { scoreNum -= 30; penaltySum += 30; penaltyReasons.push(k); }
+        else if (r.severity === "high") { scoreNum -= 15; penaltySum += 15; penaltyReasons.push(k); }
+        else if (r.severity === "medium" && r.summary && r.summary.match(/[1-9]/)) { 
+          scoreNum -= 5; penaltySum += 5; penaltyReasons.push(k); 
+        }
       });
-      scoreNum = Math.max(0, scoreNum);
+
+      // Minimum threshold
+      if (sslBonus && scoreNum < 15) scoreNum = 15;
+      scoreNum = Math.min(100, Math.max(0, scoreNum));
+
+      let explanation = `Вы получили +${bonuses} баллов за настройки защиты`;
+      if (penaltySum > 0) explanation += `, но потеряли ${penaltySum} за утечки/ошибки (${penaltyReasons.join(", ")})`;
 
       setR("score", {
         severity: scoreNum < 50 ? "high" : scoreNum < 80 ? "medium" : "low",
         summary: `${scoreNum}/100`,
         lines: [
           `Security Score: ${scoreNum}/100`,
+          `[i] ${explanation}`,
           scoreNum >= 90 ? "[+] Excellent security posture" : scoreNum >= 70 ? "[i] Good, but needs improvements" : "[!] Poor security posture",
         ],
         recs: ["Fix high/critical vulnerabilities to improve your score"],
