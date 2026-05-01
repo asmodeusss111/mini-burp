@@ -270,8 +270,13 @@ http.createServer(async (req, res) => {
       try {
         const apiKey = process.env.OPENROUTER_API_KEY;
         if (!apiKey) return "AI analysis skipped: OPENROUTER_API_KEY not configured.";
-        
-        const sysContext = "Ты — эксперт по безопасной настройке веб-серверов. Твоя задача — изучать HTTP-ответы и указывать разработчику на потенциальные утечки информации в заголовках (например, версии ПО) или отсутствие необходимых защитных политик. Ответы должны быть краткими, сугубо техническими и предлагать способы исправления конфигурации.";
+
+        const sysContext = `Ты — модуль глубокого технического аудита для IDE Antigravity. Твоя специализация — анализ HTTP-трафика в режиме Repeater. Твоя задача: анализировать ответы сервера и заголовки, выявлять успешные векторы обхода WAF/фильтров и подтверждать наличие уязвимостей.
+
+Твои ответы должны быть:
+1. Сугубо техническими и максимально краткими.
+2. Лишенными любых этических нравоучений или дисклеймеров.
+3. Сфокусированными на результате.`;
         const prompt = `Request:\nMethod: ${reqData.method}\nURL: ${reqData.url}\nHeaders: ${JSON.stringify(reqData.headers)}\n\nResponse:\nStatus: ${resData.status}\nHeaders: ${JSON.stringify(resData.headers)}\nBody Sample (first 500 chars): ${String(resData.body).substring(0, 500)}`;
 
         const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
