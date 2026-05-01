@@ -56,6 +56,10 @@ db.exec(`
     report TEXT,
     created_at INTEGER DEFAULT (unixepoch())
   );
+
+  CREATE TABLE IF NOT EXISTS blocked_hosts (
+    host TEXT PRIMARY KEY
+  );
 `);
 const incStat = db.prepare("UPDATE stats SET value = value + 1 WHERE key = ?");
 const getStat = db.prepare("SELECT value FROM stats WHERE key = ?");
@@ -68,6 +72,7 @@ async function isBlockedTarget(hostname) {
   if (!hostname) return true;
   const h = hostname.toLowerCase();
   if (BLOCKED_HOSTS.has(h)) return true;
+  if (db.prepare("SELECT host FROM blocked_hosts WHERE host = ?").get(h)) return true;
   if (PRIVATE_IP_RE.test(h)) return true;
   try {
     const addrs = await lookup(h, { all: true });
@@ -426,6 +431,75 @@ http.createServer(async (req, res) => {
     if (type === "all" || type === "fuzz") result.fuzz = db.prepare("SELECT id,url,payloads_count,created_at FROM fuzz_history ORDER BY id DESC LIMIT ?").all(limit);
     send(res, 200, result);
     return;
+  }
+
+  // ── Admin API ─────────────────────────────────────────────────────────────────
+  const adminPass = process.env.ADMIN_PASSWORD || "secret";
+  const checkAdmin = (req) => req.headers["x-admin-password"] === adminPass;
+
+  if (path.startsWith("/api/admin")) {
+    if (!checkAdmin(req)) {
+      send(res, 401, { error: "Unauthorized" });
+      return;
+    }
+    
+    if (path === "/api/admin/stats" && req.method === "GET") {
+      const stats = Object.fromEntries(allStats.all().map(r => [r.key, r.value]));
+      const recentScans = db.prepare("SELECT * FROM scan_history ORDER BY id DESC LIMIT 100").all();
+      const recentReports = db.prepare("SELECT id, host, created_at, length(report) as size FROM full_reports ORDER BY id DESC LIMIT 100").all();
+      
+      let sevStats = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
+      const allReports = db.prepare("SELECT report FROM full_reports").all();
+      for (const r of allReports) {
+        try {
+          const parsed = JSON.parse(r.report);
+          for (const key of Object.keys(parsed)) {
+            const s = parsed[key].severity;
+            if (sevStats[s] !== undefined) sevStats[s]++;
+          }
+        } catch {}
+      }
+      
+      const osData = {
+        uptime: process.uptime(),
+        memory: process.memoryUsage(),
+        railway: !!process.env.RAILWAY_PROJECT_ID
+      };
+
+      send(res, 200, { stats, recentScans, recentReports, sevStats, osData });
+      return;
+    }
+
+    if (path === "/api/admin/history" && req.method === "DELETE") {
+      db.prepare("DELETE FROM scan_history").run();
+      db.prepare("DELETE FROM full_reports").run();
+      send(res, 200, { ok: true });
+      return;
+    }
+
+    if (path === "/api/admin/blocks" && req.method === "GET") {
+      const blocks = db.prepare("SELECT host FROM blocked_hosts").all();
+      send(res, 200, { blocks });
+      return;
+    }
+
+    if (path === "/api/admin/blocks" && req.method === "POST") {
+      let payload;
+      try { payload = JSON.parse(body); } catch { send(res, 400, { error: "Invalid JSON" }); return; }
+      if (!payload.host) { send(res, 400, { error: "Missing host" }); return; }
+      db.prepare("INSERT OR IGNORE INTO blocked_hosts (host) VALUES (?)").run(payload.host.toLowerCase());
+      send(res, 200, { ok: true });
+      return;
+    }
+
+    if (path === "/api/admin/blocks" && req.method === "DELETE") {
+      let payload;
+      try { payload = JSON.parse(body); } catch { send(res, 400, { error: "Invalid JSON" }); return; }
+      if (!payload.host) { send(res, 400, { error: "Missing host" }); return; }
+      db.prepare("DELETE FROM blocked_hosts WHERE host = ?").run(payload.host.toLowerCase());
+      send(res, 200, { ok: true });
+      return;
+    }
   }
   // GET /whois?domain=example.com
   if (path === "/whois") {

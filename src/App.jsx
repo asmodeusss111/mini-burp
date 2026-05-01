@@ -8,6 +8,7 @@ import FuzzerTab from "./tabs/FuzzerTab.jsx";
 import InterceptorTab from "./tabs/InterceptorTab.jsx";
 import DecoderTab from "./tabs/DecoderTab.jsx";
 import HistoryTab from "./tabs/HistoryTab.jsx";
+import AdminTab from "./tabs/AdminTab.jsx";
 
 const TABS = [
   { id: "scanner",     label: "Scanner",     icon: "⚡" },
@@ -22,12 +23,25 @@ export default function App() {
   const [tab, setTab] = useState("scanner");
   const [proxyOnline, setProxy] = useState(false);
 
+  const [isAdminRoute, setIsAdminRoute] = useState(window.location.hash === "#admin-v8x2k9l1p5n3");
+
   useEffect(() => {
     const check = async () => setProxy(await checkProxy());
     check();
     const iv = setInterval(check, 5000);
-    return () => clearInterval(iv);
+    
+    const handleHash = () => setIsAdminRoute(window.location.hash === "#admin-v8x2k9l1p5n3");
+    window.addEventListener("hashchange", handleHash);
+    
+    return () => {
+      clearInterval(iv);
+      window.removeEventListener("hashchange", handleHash);
+    };
   }, []);
+
+  if (isAdminRoute) {
+    return <AdminTab />;
+  }
 
   return (
     <div style={{ minHeight: "100vh", background: C.bg, color: C.text, display: "flex", flexDirection: "column" }}>
