@@ -523,6 +523,60 @@ export default function ScannerTab({ proxyOnline }) {
       log(`[+] security.txt: ${has ? "found" : "missing"}`, has ? C.green : C.muted);
     } catch { setR("sectxt", { severity: "info", summary: "Error", lines: ["[-] Error"], recs: [] }); }
 
+    // 13.5 JS Secrets Scraper
+    markA("secrets");
+    try {
+      const r = await apiGet("https://" + host, proxyOnline);
+      const html = r.body || "";
+      const scriptRegex = /<script\s+[^>]*src=["']([^"']+\.js)["']/gi;
+      const scripts = [];
+      let match;
+      while ((match = scriptRegex.exec(html)) !== null) {
+        let src = match[1];
+        if (src.startsWith("/")) src = `https://${host}${src}`;
+        else if (!src.startsWith("http")) src = `https://${host}/${src}`;
+        scripts.push(src);
+      }
+      
+      const foundSecrets = [];
+      const SECRETS_RE = [
+        { name: "Google API Key", re: /AIza[0-9A-Za-z-_]{35}/g },
+        { name: "OpenAI Key", re: /sk-[a-zA-Z0-9]{20,48}/g },
+        { name: "Stripe Key", re: /sk_live_[0-9a-zA-Z]{24}/g },
+        { name: "GitHub Token", re: /ghp_[a-zA-Z0-9]{36}/g },
+        { name: "AWS Access Key", re: /(A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}/g }
+      ];
+
+      let scrapedCount = 0;
+      for (const s of scripts.slice(0, 5)) { // Limit to 5 scripts
+        try {
+          const jsR = await apiGet(s, proxyOnline);
+          if (jsR.status === 200 && jsR.body) {
+            scrapedCount++;
+            for (const sRule of SECRETS_RE) {
+              const matches = jsR.body.match(sRule.re);
+              if (matches) {
+                matches.slice(0, 3).forEach(m => foundSecrets.push({ file: s, type: sRule.name, val: m }));
+              }
+            }
+          }
+        } catch {}
+      }
+
+      setR("secrets", {
+        severity: foundSecrets.length > 0 ? "critical" : "info",
+        summary: foundSecrets.length > 0 ? `${foundSecrets.length} secrets found!` : `Scraped ${scrapedCount} scripts (clean)`,
+        lines: [
+          `JS Secrets Scraper`,
+          `[i] Scanned ${scrapedCount} JS files for hardcoded keys`,
+          foundSecrets.length === 0 ? "[+] No obvious secrets found" : `[!] Found ${foundSecrets.length} secrets:`,
+          ...foundSecrets.map(f => `[!!] ${f.type} in ${f.file.split("/").pop()}: ${f.val.slice(0, 10)}...`),
+        ],
+        recs: foundSecrets.length > 0 ? ["Revoke exposed API keys immediately", "Remove secrets from frontend code"] : [],
+      });
+      log(`[+] JS Secrets: ${foundSecrets.length} found`, foundSecrets.length > 0 ? C.red : C.green);
+    } catch { setR("secrets", { severity: "info", summary: "Error", lines: ["[-] Failed"], recs: [] }); }
+
     // 14. CORS
     markA("cors");
     try {

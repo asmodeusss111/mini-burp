@@ -33,11 +33,12 @@ export const CHECKS = [
   { id: "ip",         icon: "●",  label: "IP Reputation",   desc: "ip-api.com" },
   { id: "cve",        icon: "⚠",  label: "CVE",             desc: "NIST NVD" },
   { id: "sectxt",     icon: "📄", label: "Security.txt",    desc: "Bug bounty" },
+  { id: "secrets",    icon: "🔑", label: "JS Secrets",      desc: "Scrape API keys" },
   { id: "cors",       icon: "✈",  label: "CORS Policy",     desc: "Wildcard/reflect" },
   { id: "clickjack",  icon: "⧉",  label: "Clickjacking",    desc: "X-Frame/CSP" },
   { id: "openredir",  icon: "⇢",  label: "Open Redirect",   desc: "?url= params" },
   { id: "wordpress",  icon: "W",  label: "WordPress",       desc: "Admin/xmlrpc/users" },
   { id: "dirlisting", icon: "📂", label: "Dir Listing",     desc: "Common dirs" },
-  { id: "sensitive",  icon: "🔑", label: "Sensitive Files", desc: ".env/.git/phpinfo" },
+  { id: "sensitive",  icon: "🚨", label: "Sensitive Files", desc: ".env/.git/phpinfo" },
   { id: "whois",      icon: "🌐", label: "WHOIS / RDAP",    desc: "Registrar, expiry" },
 ];
