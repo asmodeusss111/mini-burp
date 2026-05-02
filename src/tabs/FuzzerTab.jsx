@@ -37,6 +37,12 @@ export default function FuzzerTab({ proxyOnline }) {
   const [running, setRunning] = useState(false);
   const [filter, setFilter] = useState("");
   const [sel, setSel] = useState(null);
+
+  // Engine State
+  const [smartSpeed, setSmartSpeed] = useState(true);
+  const [jitterMax, setJitterMax] = useState(200);
+  const [currentTick, setCurrentTick] = useState(1000);
+
   const abortRef = useRef(null);
 
   const startFuzz = async () => {
@@ -67,6 +73,8 @@ export default function FuzzerTab({ proxyOnline }) {
     abortRef.current = { cancelled: false };
     const ab = abortRef.current;
 
+    let currentDelay = 1000;
+
     for (const payload of payloads) {
       if (ab.cancelled) break;
       const testUrl = baseUrl.replace(/§[^§]*§/g, encodeURIComponent(payload));
@@ -89,6 +97,15 @@ export default function FuzzerTab({ proxyOnline }) {
 
         const r = await sendRequest({ url: testUrl, method: "GET", headers });
         const elapsed = Date.now() - t;
+
+        // Smart Speed logic
+        if (smartSpeed) {
+          if (elapsed > 2000) currentDelay += 500;
+          else if (elapsed < 500) currentDelay = Math.max(500, currentDelay - 200);
+        } else {
+          currentDelay = 1000; // Reset or fixed mode
+        }
+
         setResults(prev => [...prev, {
           id: crypto.randomUUID(),
           payload,
@@ -102,8 +119,16 @@ export default function FuzzerTab({ proxyOnline }) {
       } catch {
         setResults(prev => [...prev, { id: crypto.randomUUID(), payload, url: testUrl, status: "ERR", length: 0, time: 0, body: "", headers: {} }]);
       }
-      // Fixed 1000ms delay to prevent blocks
-      await new Promise(r => setTimeout(r, 1000));
+
+      // Calculate Jitter
+      let finalDelay = currentDelay;
+      if (jitterMax > 0) {
+        finalDelay += Math.floor(Math.random() * (jitterMax * 2 + 1)) - jitterMax;
+      }
+      finalDelay = Math.max(100, finalDelay); // Prevent extremely small or negative delays
+      
+      setCurrentTick(finalDelay);
+      await new Promise(r => setTimeout(r, finalDelay));
     }
     setRunning(false);
   };
@@ -145,6 +170,23 @@ export default function FuzzerTab({ proxyOnline }) {
           <Btn onClick={running ? stop : startFuzz} active color={running ? C.red : C.accent} small>
             {running ? "⊘ Stop" : "⚔ Start"}
           </Btn>
+        </div>
+
+        {/* Engine Settings */}
+        <div style={{ padding: "8px 12px", borderBottom: `1px solid ${C.border}`, display: "flex", gap: 16, alignItems: "center", flexWrap: "wrap", background: C.bg + "40" }}>
+          <div style={{ color: C.muted, fontSize: 10, fontWeight: "bold" }}>ENGINE SETTINGS</div>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, cursor: "pointer", color: C.text }}>
+            <input type="checkbox" checked={smartSpeed} onChange={e => setSmartSpeed(e.target.checked)} />
+            Enable Smart Speed
+          </label>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, color: C.text }}>
+            <span style={{ color: C.muted }}>Jitter:</span>
+            <input type="range" min="0" max="1000" step="50" value={jitterMax} onChange={e => setJitterMax(Number(e.target.value))} style={{ width: 80 }} />
+            <span style={{ fontFamily: "monospace", width: 35 }}>{jitterMax}ms</span>
+          </div>
+          <div style={{ marginLeft: "auto", fontSize: 11, fontFamily: "monospace", color: C.accent, padding: "2px 6px", background: C.border + "40", borderRadius: 4 }}>
+            Current Tick: {currentTick}ms
+          </div>
         </div>
 
         {preset === "custom" && (
