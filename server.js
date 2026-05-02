@@ -144,6 +144,7 @@ function proxyRequest(targetUrl, method, reqHeaders, body, res, _redirectCount =
     method: method || "GET",
     headers: { ...safeHeaders, host: parsed.hostname },
     timeout: 15000,
+    rejectUnauthorized: false,
   };
   const preq = lib.request(options, pres => {
     if ([301, 302, 303, 307, 308].includes(pres.statusCode) && pres.headers.location) {
@@ -389,6 +390,7 @@ http.createServer(async (req, res) => {
             method: "GET",
             headers: { host: parsed2.hostname, "User-Agent": "SecurityScanner/1.0" },
             timeout: 8000,
+            rejectUnauthorized: false,
           }, res2 => {
             let data2 = "";
             res2.on("data", c => { if (data2.length < 50000) data2 += c; });
