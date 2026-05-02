@@ -18,7 +18,7 @@ const getRandomIp = () => {
   return `${Math.floor(Math.random() * 255) + 1}.${r()}.${r()}.${r()}`;
 };
 
-// Функция задержки
+// Базовая функция задержки
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
 // ============================================================================
@@ -83,6 +83,8 @@ async function runSecurityAudit() {
   console.log(`[Status] | Path ${' '.repeat(35)} | Size (B) | Time`);
   console.log('-'.repeat(80));
 
+  let currentDelay = 1000; // Начальная задержка 1000мс
+
   for (const path of paths) {
     const randomIp = getRandomIp();
     
@@ -137,8 +139,22 @@ async function runSecurityAudit() {
       console.log(`${statusFormatted.padEnd(8)} | ${path.padEnd(40)} | ${'---'.padStart(8)} | ${timeFormatted.padStart(8)} -> ${errorMsg}`);
     }
 
-    // Задержка ровно в 1 секунду перед следующим запросом
-    await delay(1000);
+    // --- SMART SPEED (Динамическая задержка) ---
+    // Если сервер отвечает дольше 2 секунд, увеличиваем паузу, чтобы не перегружать
+    if (timeMs > 2000) {
+      currentDelay += 500;
+    // Если сервер отвечает быстрее 500мс, понемногу возвращаем паузу к норме (минимум 500мс)
+    } else if (timeMs < 500) {
+      currentDelay = Math.max(500, currentDelay - 200);
+    }
+
+    // --- JITTER (Рандомизация отклонения) ---
+    // Разброс +/- 20% от текущей задержки
+    const jitter = currentDelay * 0.2;
+    const finalDelay = Math.floor(currentDelay + (Math.random() * (jitter * 2) - jitter));
+
+    // Применяем итоговую задержку
+    await delay(finalDelay);
   }
 
   console.log('='.repeat(80));
