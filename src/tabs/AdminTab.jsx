@@ -4,7 +4,7 @@ import { Panel, Btn, Inp } from "../components/ui.jsx";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, CartesianGrid } from "recharts";
 
 export default function AdminTab() {
-  const [pass, setPass] = useState(localStorage.getItem("adminPass") || "");
+  const [pass, setPass] = useState(sessionStorage.getItem("adminPass") || "");
   const [auth, setAuth] = useState(false);
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
@@ -19,12 +19,12 @@ export default function AdminTab() {
       if (r.status === 401) {
         setAuth(false);
         setError("Invalid password");
-        localStorage.removeItem("adminPass");
+        sessionStorage.removeItem("adminPass");
       } else if (r.ok) {
         const d = await r.json();
         setData(d);
         setAuth(true);
-        localStorage.setItem("adminPass", pass);
+        sessionStorage.setItem("adminPass", pass);
         setError("");
         fetchBlocks();
       }
@@ -103,7 +103,7 @@ export default function AdminTab() {
 
   const scanTimeline = data.recentScans.map(s => ({
     time: new Date(s.created_at * 1000).toLocaleTimeString(),
-    ports: s.open_ports ? s.open_ports.split(",").length : 0
+    ports: s.open_ports ? (() => { try { return JSON.parse(s.open_ports).length; } catch { return 0; } })() : 0
   })).reverse();
 
   return (
@@ -112,7 +112,7 @@ export default function AdminTab() {
         <h2><span style={{ color: C.accent }}>BURP</span> ADMIN DASHBOARD</h2>
         <div style={{ display: "flex", gap: 10 }}>
           <Btn onClick={() => window.location.hash = ""} small color={C.blue}>🏠 Home</Btn>
-          <Btn onClick={() => { setAuth(false); localStorage.removeItem("adminPass"); }} small>Logout</Btn>
+          <Btn onClick={() => { setAuth(false); sessionStorage.removeItem("adminPass"); }} small>Logout</Btn>
         </div>
       </div>
 

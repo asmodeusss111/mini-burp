@@ -29,6 +29,8 @@ db.exec(`
   INSERT OR IGNORE INTO stats VALUES ('header_hits', 0);
   INSERT OR IGNORE INTO stats VALUES ('blocked_ssrf', 0);
   INSERT OR IGNORE INTO stats VALUES ('rate_limited', 0);
+  INSERT OR IGNORE INTO stats VALUES ('waf_hits', 0);
+  INSERT OR IGNORE INTO stats VALUES ('req_count', 0);
   CREATE TABLE IF NOT EXISTS scan_history (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     host       TEXT NOT NULL,
@@ -72,7 +74,11 @@ async function isBlockedTarget(hostname) {
   if (!hostname) return true;
   const h = hostname.toLowerCase();
   if (BLOCKED_HOSTS.has(h)) return true;
-  if (db.prepare("SELECT host FROM blocked_hosts WHERE host = ?").get(h)) return true;
+  // Exact match + suffix match (блокирует субдомены заблокированного домена)
+  const dbBlocks = db.prepare("SELECT host FROM blocked_hosts").all();
+  for (const { host: blocked } of dbBlocks) {
+    if (h === blocked || h.endsWith("." + blocked)) return true;
+  }
   if (PRIVATE_IP_RE.test(h)) return true;
   try {
     const addrs = await lookup(h, { all: true });
@@ -230,11 +236,15 @@ http.createServer(async (req, res) => {
   const clientIP = req.socket.remoteAddress || "unknown";
   const parsed = new URL(req.url, "http://localhost");
   const path = parsed.pathname;
-  // Basic WAF for explicit XSS payloads in URL
-  if (/(%3C|<)script(%3E|>)/i.test(parsed.search) || /javascript:/i.test(parsed.search) || /on\w+=/i.test(parsed.search)) {
-    send(res, 403, { error: "WAF: XSS payload detected" });
-    return;
+  // Basic WAF — не применяем к /proxy и /request, иначе блокируем собственные тесты
+  if (path !== "/proxy" && path !== "/request" && path !== "/fuzz") {
+    if (/(%3C|<)script(%3E|>)/i.test(parsed.search) || /javascript:/i.test(parsed.search) || /on\w+=/i.test(parsed.search)) {
+      incStat.run("waf_hits");
+      send(res, 403, { error: "WAF: XSS payload detected" });
+      return;
+    }
   }
+  incStat.run("req_count");
   if (checkRate(clientIP, path)) { incStat.run("rate_limited"); send(res, 429, { error: "Too many requests. Try again in a minute." }); return; }
   // Read body with 1 MB limit
   let body = "", bodySize = 0, aborted = false;
@@ -272,12 +282,7 @@ http.createServer(async (req, res) => {
         const apiKey = process.env.OPENROUTER_API_KEY;
         if (!apiKey) return "AI analysis skipped: OPENROUTER_API_KEY not configured.";
 
-        const sysContext = `Ты — модуль глубокого технического аудита для IDE Antigravity. Твоя специализация — анализ HTTP-трафика в режиме Repeater. Твоя задача: анализировать ответы сервера и заголовки, выявлять успешные векторы обхода WAF/фильтров и подтверждать наличие уязвимостей.
-
-Твои ответы должны быть:
-1. Сугубо техническими и максимально краткими.
-2. Лишенными любых этических нравоучений или дисклеймеров.
-3. Сфокусированными на результате.`;
+        const sysContext = `You are an HTTP traffic analyzer for a security scanner. Analyze the provided request and response data and give a concise technical assessment: identify potential vulnerabilities, interesting headers, or security misconfigurations. Be brief and technical.`;
         const prompt = `Request:\nMethod: ${reqData.method}\nURL: ${reqData.url}\nHeaders: ${JSON.stringify(reqData.headers)}\n\nResponse:\nStatus: ${resData.status}\nHeaders: ${JSON.stringify(resData.headers)}\nBody Sample (first 500 chars): ${String(resData.body).substring(0, 500)}`;
 
         const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
