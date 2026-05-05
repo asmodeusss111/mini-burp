@@ -3,9 +3,9 @@ import { C } from "../lib/constants.js";
 import { Panel, Btn, Inp } from "../components/ui.jsx";
 
 const SYSTEM_PROMPTS = {
-  security: "You are an expert cybersecurity analyst and penetration tester. You help analyze vulnerabilities, suggest exploitation techniques, write security reports, and provide remediation advice. Be concise but thorough. Use markdown formatting for code blocks and lists.",
-  code: "You are an expert programmer. You help write, debug, and optimize code. You know JavaScript, Python, Go, Rust, and security tools. Always provide code examples with syntax highlighting using markdown code blocks.",
-  general: "You are a helpful AI assistant integrated into Mini Burp Security Scanner. You can help with anything — security analysis, coding, system administration, network analysis, and more. Use markdown formatting.",
+  security: "You are a cybersecurity expert embedded in Mini Burp Security Scanner. Answer naturally and directly — never list your capabilities unless asked. If the user says hi, just say hi back briefly. Speak concisely, use markdown for code. You know pentesting, vulnerability analysis, WAF bypass, OWASP, network security, exploit development. Respond in the same language the user writes in.",
+  code: "You are a senior developer embedded in Mini Burp Security Scanner. Answer naturally and directly — never list your capabilities unless asked. If the user says hi, just say hi back briefly. Write clean, working code. You know JavaScript, Python, Go, Rust, Node.js, React, and security tooling. Use markdown code blocks with language tags. Respond in the same language the user writes in.",
+  general: "You are a smart AI assistant embedded in Mini Burp Security Scanner. Answer naturally and directly — never list your capabilities unless asked. If the user says hi, just say hi back briefly. Be helpful and concise. Use markdown formatting when useful. Respond in the same language the user writes in.",
 };
 
 const MODELS = [
@@ -54,10 +54,18 @@ function escHtml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
+const WELCOME_MESSAGES = {
+  security: "🛡 Режим Security. Спрашивай про уязвимости, пентест, WAF bypass — отвечу по делу.",
+  code: "💻 Режим Code. Пиши что нужно закодить, отладить или оптимизировать.",
+  general: "💬 Режим General. Задавай любые вопросы.",
+};
+
 export default function AiChatTab({ adminPass }) {
-  const [messages, setMessages] = useState([
-    { role: "assistant", content: "👋 Привет! Я AI-помощник Mini Burp. Могу помочь с анализом безопасности, написанием кода, разбором уязвимостей и многим другим.\n\nВыбери режим и модель выше, затем задай вопрос!" }
-  ]);
+  const [chatHistories, setChatHistories] = useState({
+    security: [{ role: "assistant", content: WELCOME_MESSAGES.security }],
+    code: [{ role: "assistant", content: WELCOME_MESSAGES.code }],
+    general: [{ role: "assistant", content: WELCOME_MESSAGES.general }],
+  });
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [model, setModel] = useState(MODELS[0].id);
@@ -68,6 +76,14 @@ export default function AiChatTab({ adminPass }) {
   const [tokenCount, setTokenCount] = useState(0);
   const chatEndRef = useRef(null);
   const inputRef = useRef(null);
+
+  const messages = chatHistories[mode];
+  const setMessages = (updater) => {
+    setChatHistories(prev => ({
+      ...prev,
+      [mode]: typeof updater === "function" ? updater(prev[mode]) : updater,
+    }));
+  };
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -153,7 +169,7 @@ export default function AiChatTab({ adminPass }) {
 
   const clearChat = () => {
     setMessages([
-      { role: "assistant", content: "🧹 Чат очищен. Задавай новые вопросы!" }
+      { role: "assistant", content: WELCOME_MESSAGES[mode] }
     ]);
     setTokenCount(0);
   };
