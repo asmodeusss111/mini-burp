@@ -14,12 +14,12 @@ const MODELS = [
   { id: "anthropic/claude-3.5-haiku", name: "Claude 3.5 Haiku", provider: "Anthropic", tag: "💎" },
   { id: "deepseek/deepseek-chat-v3-0324", name: "DeepSeek V3", provider: "DeepSeek", tag: "💎" },
   { id: "openai/gpt-4o-mini", name: "GPT-4o Mini", provider: "OpenAI", tag: "💎" },
-  // ── Free (бесплатные) ──
-  { id: "deepseek/deepseek-chat-v3-0324:free", name: "DeepSeek V3", provider: "DeepSeek", tag: "🆓" },
-  { id: "google/gemma-3-27b-it:free", name: "Gemma 3 27B", provider: "Google", tag: "🆓" },
-  { id: "meta-llama/llama-4-scout:free", name: "Llama 4 Scout", provider: "Meta", tag: "🆓" },
-  { id: "qwen/qwen3-235b-a22b:free", name: "Qwen 3 235B", provider: "Alibaba", tag: "🆓" },
-  { id: "mistralai/mistral-small-3.1-24b-instruct:free", name: "Mistral Small 3.1", provider: "Mistral", tag: "🆓" },
+  // ── Free (бесплатные, актуальные май 2026) ──
+  { id: "openrouter/free", name: "Auto (Free Router)", provider: "OpenRouter", tag: "🆓" },
+  { id: "google/gemma-4-31b-it:free", name: "Gemma 4 31B", provider: "Google", tag: "🆓" },
+  { id: "nvidia/nemotron-3-super-120b-a12b:free", name: "Nemotron 3 Super 120B", provider: "NVIDIA", tag: "🆓" },
+  { id: "openai/gpt-oss-120b:free", name: "GPT-OSS 120B", provider: "OpenAI", tag: "🆓" },
+  { id: "minimax/minimax-m2.5:free", name: "MiniMax M2.5", provider: "MiniMax", tag: "🆓" },
 ];
 
 function renderMarkdown(text) {
