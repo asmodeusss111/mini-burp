@@ -63,10 +63,18 @@ const WELCOME_MESSAGES = {
 };
 
 export default function AiChatTab({ adminPass }) {
-  const [chatHistories, setChatHistories] = useState({
+  const defaultHistories = {
     security: [{ role: "assistant", content: WELCOME_MESSAGES.security }],
     code: [{ role: "assistant", content: WELCOME_MESSAGES.code }],
     general: [{ role: "assistant", content: WELCOME_MESSAGES.general }],
+  };
+
+  const [chatHistories, setChatHistories] = useState(() => {
+    try {
+      const saved = localStorage.getItem("ai_chat_histories");
+      if (saved) return JSON.parse(saved);
+    } catch {}
+    return defaultHistories;
   });
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
@@ -86,6 +94,13 @@ export default function AiChatTab({ adminPass }) {
       [mode]: typeof updater === "function" ? updater(prev[mode]) : updater,
     }));
   };
+
+  // Save chat histories to localStorage on every change
+  useEffect(() => {
+    try {
+      localStorage.setItem("ai_chat_histories", JSON.stringify(chatHistories));
+    } catch {}
+  }, [chatHistories]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
