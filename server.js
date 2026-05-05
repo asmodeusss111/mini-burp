@@ -122,7 +122,7 @@ function secHeaders(res) {
   res.setHeader("X-Frame-Options", "DENY");
   res.setHeader("Referrer-Policy", "no-referrer");
   res.setHeader("Strict-Transport-Security", "max-age=63072000");
-  res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.railway.app; connect-src 'self' https://*.railway.app; style-src 'self' 'unsafe-inline'; img-src 'self' data:;");
+  res.setHeader("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.railway.app; connect-src 'self' https://*.railway.app; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' https://fonts.gstatic.com;");
   res.setHeader("Permissions-Policy", "geolocation=(), microphone=(), camera=()");
 }
 function send(res, status, body) {
@@ -580,6 +580,53 @@ http.createServer(async (req, res) => {
       if (!payload.host) { send(res, 400, { error: "Missing host" }); return; }
       db.prepare("DELETE FROM blocked_hosts WHERE host = ?").run(payload.host.toLowerCase());
       send(res, 200, { ok: true });
+      return;
+    }
+
+    // POST /api/admin/chat — AI Chat proxy to OpenRouter
+    if (path === "/api/admin/chat" && req.method === "POST") {
+      let payload;
+      try { payload = JSON.parse(body); } catch { send(res, 400, { error: "Invalid JSON" }); return; }
+      const { messages: chatMessages, model: chatModel, apiKey: clientApiKey } = payload;
+      const orKey = clientApiKey || process.env.OPENROUTER_API_KEY;
+      if (!orKey) { send(res, 400, { error: "No API key provided. Set it in AI Chat settings." }); return; }
+      if (!Array.isArray(chatMessages) || chatMessages.length === 0) { send(res, 400, { error: "No messages" }); return; }
+
+      try {
+        const orResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${orKey}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://miniburp.app",
+            "X-Title": "Mini Burp AI Assistant",
+          },
+          body: JSON.stringify({
+            model: chatModel || "google/gemma-3-27b-it:free",
+            messages: chatMessages,
+            max_tokens: 4096,
+          }),
+        });
+
+        if (!orResponse.ok) {
+          const errText = await orResponse.text();
+          send(res, 200, { error: `OpenRouter API error ${orResponse.status}: ${errText}` });
+          return;
+        }
+
+        const orData = await orResponse.json();
+        if (orData.choices && orData.choices.length > 0 && orData.choices[0].message) {
+          send(res, 200, {
+            content: orData.choices[0].message.content,
+            usage: orData.usage || null,
+            model: orData.model || chatModel,
+          });
+        } else {
+          send(res, 200, { error: "Unexpected response format from OpenRouter", raw: orData });
+        }
+      } catch (err) {
+        send(res, 200, { error: `Request failed: ${err.message}` });
+      }
       return;
     }
   }

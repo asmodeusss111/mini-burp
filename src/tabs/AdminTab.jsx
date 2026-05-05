@@ -2,6 +2,12 @@ import { useState, useEffect } from "react";
 import { C } from "../lib/constants.js";
 import { Panel, Btn, Inp } from "../components/ui.jsx";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, CartesianGrid } from "recharts";
+import AiChatTab from "./AiChatTab.jsx";
+
+const ADMIN_SECTIONS = [
+  { id: "dashboard", icon: "📊", label: "Dashboard" },
+  { id: "ai", icon: "🤖", label: "AI Assistant" },
+];
 
 export default function AdminTab() {
   const [pass, setPass] = useState(sessionStorage.getItem("adminPass") || "");
@@ -11,6 +17,7 @@ export default function AdminTab() {
   const [loading, setLoading] = useState(false);
   const [newBlock, setNewBlock] = useState("");
   const [blocks, setBlocks] = useState([]);
+  const [section, setSection] = useState("dashboard");
 
   const fetchData = async () => {
     setLoading(true);
@@ -92,120 +99,205 @@ export default function AdminTab() {
     );
   }
 
-  if (!data) return <div style={{ padding: 20, color: C.text }}>Loading...</div>;
+  if (!data && section === "dashboard") return <div style={{ padding: 20, color: C.text }}>Loading...</div>;
 
-  const sevData = [
+  const sevData = data ? [
     { name: "Critical", value: data.sevStats.critical || 0, fill: C.red },
     { name: "High", value: data.sevStats.high || 0, fill: "#ff6b35" },
     { name: "Medium", value: data.sevStats.medium || 0, fill: C.yellow },
     { name: "Low", value: data.sevStats.low || 0, fill: C.green },
-  ];
+  ] : [];
 
-  const scanTimeline = data.recentScans.map(s => ({
+  const scanTimeline = data ? data.recentScans.map(s => ({
     time: new Date(s.created_at * 1000).toLocaleTimeString(),
     ports: s.open_ports ? (() => { try { return JSON.parse(s.open_ports).length; } catch { return 0; } })() : 0
-  })).reverse();
+  })).reverse() : [];
 
   return (
-    <div style={{ minHeight: "100vh", background: C.bg, color: C.text, padding: 20, fontFamily: "monospace" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20, borderBottom: `1px solid ${C.border}`, paddingBottom: 10 }}>
-        <h2><span style={{ color: C.accent }}>BURP</span> ADMIN DASHBOARD</h2>
-        <div style={{ display: "flex", gap: 10 }}>
+    <div style={{ minHeight: "100vh", background: C.bg, color: C.text, display: "flex", fontFamily: "monospace" }}>
+      {/* Sidebar */}
+      <div style={{
+        width: 200,
+        background: "#0a0e13",
+        borderRight: `1px solid ${C.border}`,
+        display: "flex",
+        flexDirection: "column",
+        flexShrink: 0,
+      }}>
+        {/* Logo */}
+        <div style={{
+          padding: "16px 14px",
+          borderBottom: `1px solid ${C.border}`,
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+        }}>
+          <span style={{ color: C.accent, fontWeight: 700, fontSize: 14 }}>BURP</span>
+          <span style={{ color: C.muted, fontSize: 11 }}>Admin</span>
+        </div>
+
+        {/* Navigation */}
+        <div style={{ flex: 1, padding: "8px 0" }}>
+          {ADMIN_SECTIONS.map(s => (
+            <button
+              key={s.id}
+              onClick={() => setSection(s.id)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                width: "100%",
+                padding: "10px 16px",
+                border: "none",
+                background: section === s.id ? `${C.accent}15` : "transparent",
+                borderLeft: section === s.id ? `3px solid ${C.accent}` : "3px solid transparent",
+                color: section === s.id ? C.text : C.muted,
+                fontFamily: "monospace",
+                fontSize: 12,
+                cursor: "pointer",
+                transition: "all 0.15s",
+                textAlign: "left",
+              }}
+            >
+              <span style={{ fontSize: 14 }}>{s.icon}</span>
+              {s.label}
+            </button>
+          ))}
+        </div>
+
+        {/* Bottom actions */}
+        <div style={{ padding: "10px 12px", borderTop: `1px solid ${C.border}`, display: "flex", flexDirection: "column", gap: 6 }}>
           <Btn onClick={() => window.location.hash = ""} small color={C.blue}>🏠 Home</Btn>
-          <Btn onClick={() => { setAuth(false); sessionStorage.removeItem("adminPass"); }} small>Logout</Btn>
+          <Btn onClick={() => { setAuth(false); sessionStorage.removeItem("adminPass"); }} small>🚪 Logout</Btn>
         </div>
       </div>
 
-      <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 20 }}>
-        <Panel style={{ flex: 1, minWidth: 250, padding: 20 }}>
-          <h3 style={{ color: C.muted, marginBottom: 10 }}>Server Status</h3>
-          <div style={{ display: "flex", justifyContent: "space-between", margin: "5px 0" }}>
-            <span>Environment:</span> <span style={{ color: data.osData.railway ? C.green : C.yellow }}>{data.osData.railway ? "Railway" : "Local"}</span>
+      {/* Content area */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        {/* Top bar */}
+        <div style={{
+          padding: "10px 20px",
+          borderBottom: `1px solid ${C.border}`,
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "center",
+          background: C.panel,
+          flexShrink: 0,
+        }}>
+          <h2 style={{ fontSize: 16, margin: 0 }}>
+            <span style={{ color: C.accent }}>BURP</span> {ADMIN_SECTIONS.find(s => s.id === section)?.label.toUpperCase()}
+          </h2>
+          <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+            {section === "dashboard" && (
+              <Btn onClick={fetchData} small active={loading} disabled={loading}>
+                {loading ? "⏳" : "🔄"} Refresh
+              </Btn>
+            )}
           </div>
-          <div style={{ display: "flex", justifyContent: "space-between", margin: "5px 0" }}>
-            <span>Uptime:</span> <span>{(data.osData.uptime / 3600).toFixed(2)} hrs</span>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", margin: "5px 0" }}>
-            <span>Memory (RSS):</span> <span>{(data.osData.memory.rss / 1024 / 1024).toFixed(1)} MB</span>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", margin: "5px 0" }}>
-            <span>Total Requests:</span> <span>{data.stats.req_count || 0}</span>
-          </div>
-          <div style={{ display: "flex", justifyContent: "space-between", margin: "5px 0" }}>
-            <span>Blocked Threats:</span> <span style={{ color: C.red }}>{data.stats.waf_hits || 0}</span>
-          </div>
-          {data.avgScore > 0 && (
-            <div style={{ display: "flex", justifyContent: "space-between", margin: "5px 0", marginTop: 10, paddingTop: 10, borderTop: `1px solid ${C.border}` }}>
-              <span>Avg Security Score:</span> <span style={{ color: data.avgScore >= 80 ? C.green : data.avgScore >= 50 ? C.yellow : C.red, fontWeight: "bold" }}>{data.avgScore}/100</span>
+        </div>
+
+        {/* Section content */}
+        <div style={{ flex: 1, overflow: "auto" }}>
+          {section === "ai" && (
+            <AiChatTab adminPass={pass} />
+          )}
+
+          {section === "dashboard" && data && (
+            <div style={{ padding: 20 }}>
+              <div style={{ display: "flex", gap: 20, flexWrap: "wrap", marginBottom: 20 }}>
+                <Panel style={{ flex: 1, minWidth: 250, padding: 20 }}>
+                  <h3 style={{ color: C.muted, marginBottom: 10 }}>Server Status</h3>
+                  <div style={{ display: "flex", justifyContent: "space-between", margin: "5px 0" }}>
+                    <span>Environment:</span> <span style={{ color: data.osData.railway ? C.green : C.yellow }}>{data.osData.railway ? "Railway" : "Local"}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", margin: "5px 0" }}>
+                    <span>Uptime:</span> <span>{(data.osData.uptime / 3600).toFixed(2)} hrs</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", margin: "5px 0" }}>
+                    <span>Memory (RSS):</span> <span>{(data.osData.memory.rss / 1024 / 1024).toFixed(1)} MB</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", margin: "5px 0" }}>
+                    <span>Total Requests:</span> <span>{data.stats.req_count || 0}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", margin: "5px 0" }}>
+                    <span>Blocked Threats:</span> <span style={{ color: C.red }}>{data.stats.waf_hits || 0}</span>
+                  </div>
+                  {data.avgScore > 0 && (
+                    <div style={{ display: "flex", justifyContent: "space-between", margin: "5px 0", marginTop: 10, paddingTop: 10, borderTop: `1px solid ${C.border}` }}>
+                      <span>Avg Security Score:</span> <span style={{ color: data.avgScore >= 80 ? C.green : data.avgScore >= 50 ? C.yellow : C.red, fontWeight: "bold" }}>{data.avgScore}/100</span>
+                    </div>
+                  )}
+                </Panel>
+
+                <Panel style={{ flex: 1, minWidth: 300, padding: 20 }}>
+                  <h3 style={{ color: C.muted, marginBottom: 10 }}>Vulnerabilities Summary</h3>
+                  <div style={{ height: 150 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={sevData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
+                        <XAxis dataKey="name" stroke={C.muted} fontSize={10} />
+                        <YAxis stroke={C.muted} fontSize={10} allowDecimals={false} />
+                        <Tooltip contentStyle={{ background: C.panel, border: `1px solid ${C.border}` }} />
+                        <Bar dataKey="value" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </Panel>
+              </div>
+
+              <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
+                <Panel style={{ flex: 2, minWidth: 400, padding: 20 }}>
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
+                    <h3 style={{ color: C.muted }}>Recent Reports History</h3>
+                    <Btn onClick={clearHistory} small color={C.red}>Delete All History</Btn>
+                  </div>
+                  <div style={{ overflowY: "auto", maxHeight: 300 }}>
+                    <table style={{ width: "100%", textAlign: "left", fontSize: 12 }}>
+                      <thead>
+                        <tr style={{ color: C.muted }}>
+                          <th>ID</th>
+                          <th>Target Host</th>
+                          <th>Date</th>
+                          <th>Size</th>
+                          <th>Score</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {data.recentReports.map(r => (
+                          <tr key={r.id} style={{ borderBottom: `1px solid ${C.border}40` }}>
+                            <td style={{ padding: "8px 0" }}>#{r.id}</td>
+                            <td style={{ color: C.blue }}>{r.host}</td>
+                            <td>{new Date(r.created_at * 1000).toLocaleString()}</td>
+                            <td>{(r.size / 1024).toFixed(1)} KB</td>
+                            <td style={{ color: r.score >= 80 ? C.green : r.score >= 50 ? C.yellow : C.red }}>{r.score ? `${r.score}/100` : "-"}</td>
+                          </tr>
+                        ))}
+                        {data.recentReports.length === 0 && <tr><td colSpan="5" style={{ padding: 10, textAlign: "center", color: C.muted }}>No reports yet</td></tr>}
+                      </tbody>
+                    </table>
+                  </div>
+                </Panel>
+
+                <Panel style={{ flex: 1, minWidth: 300, padding: 20 }}>
+                  <h3 style={{ color: C.muted, marginBottom: 10 }}>Global Blocklist (isBlockedTarget)</h3>
+                  <div style={{ display: "flex", gap: 10, marginBottom: 15 }}>
+                    <Inp value={newBlock} onChange={setNewBlock} placeholder="example.com" style={{ flex: 1 }} />
+                    <Btn onClick={addBlock} small active>Block</Btn>
+                  </div>
+                  <div style={{ maxHeight: 250, overflowY: "auto" }}>
+                    {blocks.map(b => (
+                      <div key={b.host} style={{ display: "flex", justifyContent: "space-between", padding: "6px 10px", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 4, marginBottom: 6, alignItems: "center" }}>
+                        <span>{b.host}</span>
+                        <button onClick={() => removeBlock(b.host)} style={{ background: "none", border: "none", color: C.red, cursor: "pointer", fontWeight: "bold" }}>X</button>
+                      </div>
+                    ))}
+                    {blocks.length === 0 && <div style={{ color: C.muted, fontSize: 12, textAlign: "center" }}>No custom blocks</div>}
+                  </div>
+                </Panel>
+              </div>
             </div>
           )}
-        </Panel>
-
-        <Panel style={{ flex: 1, minWidth: 300, padding: 20 }}>
-          <h3 style={{ color: C.muted, marginBottom: 10 }}>Vulnerabilities Summary</h3>
-          <div style={{ height: 150 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={sevData}>
-                <CartesianGrid strokeDasharray="3 3" stroke={C.border} />
-                <XAxis dataKey="name" stroke={C.muted} fontSize={10} />
-                <YAxis stroke={C.muted} fontSize={10} allowDecimals={false} />
-                <Tooltip contentStyle={{ background: C.panel, border: `1px solid ${C.border}` }} />
-                <Bar dataKey="value" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </Panel>
-      </div>
-
-      <div style={{ display: "flex", gap: 20, flexWrap: "wrap" }}>
-        <Panel style={{ flex: 2, minWidth: 400, padding: 20 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
-            <h3 style={{ color: C.muted }}>Recent Reports History</h3>
-            <Btn onClick={clearHistory} small color={C.red}>Delete All History</Btn>
-          </div>
-          <div style={{ overflowY: "auto", maxHeight: 300 }}>
-            <table style={{ width: "100%", textAlign: "left", fontSize: 12 }}>
-              <thead>
-                <tr style={{ color: C.muted }}>
-                  <th>ID</th>
-                  <th>Target Host</th>
-                  <th>Date</th>
-                  <th>Size</th>
-                  <th>Score</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.recentReports.map(r => (
-                  <tr key={r.id} style={{ borderBottom: `1px solid ${C.border}40` }}>
-                    <td style={{ padding: "8px 0" }}>#{r.id}</td>
-                    <td style={{ color: C.blue }}>{r.host}</td>
-                    <td>{new Date(r.created_at * 1000).toLocaleString()}</td>
-                    <td>{(r.size / 1024).toFixed(1)} KB</td>
-                    <td style={{ color: r.score >= 80 ? C.green : r.score >= 50 ? C.yellow : C.red }}>{r.score ? `${r.score}/100` : "-"}</td>
-                  </tr>
-                ))}
-                {data.recentReports.length === 0 && <tr><td colSpan="5" style={{ padding: 10, textAlign: "center", color: C.muted }}>No reports yet</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </Panel>
-
-        <Panel style={{ flex: 1, minWidth: 300, padding: 20 }}>
-          <h3 style={{ color: C.muted, marginBottom: 10 }}>Global Blocklist (isBlockedTarget)</h3>
-          <div style={{ display: "flex", gap: 10, marginBottom: 15 }}>
-            <Inp value={newBlock} onChange={setNewBlock} placeholder="example.com" style={{ flex: 1 }} />
-            <Btn onClick={addBlock} small active>Block</Btn>
-          </div>
-          <div style={{ maxHeight: 250, overflowY: "auto" }}>
-            {blocks.map(b => (
-              <div key={b.host} style={{ display: "flex", justifyContent: "space-between", padding: "6px 10px", background: C.bg, border: `1px solid ${C.border}`, borderRadius: 4, marginBottom: 6, alignItems: "center" }}>
-                <span>{b.host}</span>
-                <button onClick={() => removeBlock(b.host)} style={{ background: "none", border: "none", color: C.red, cursor: "pointer", fontWeight: "bold" }}>X</button>
-              </div>
-            ))}
-            {blocks.length === 0 && <div style={{ color: C.muted, fontSize: 12, textAlign: "center" }}>No custom blocks</div>}
-          </div>
-        </Panel>
+        </div>
       </div>
     </div>
   );
