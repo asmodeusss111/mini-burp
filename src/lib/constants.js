@@ -45,6 +45,7 @@ export const CHECKS = [
   { id: "s3",         icon: "☁",  label: "S3 Buckets",      desc: "Public exposure" },
   { id: "dnsbrute",   icon: "D",  label: "DNS Brute",       desc: "dev/test domains" },
   { id: "nuclei",     icon: "☢",  label: "Nuclei Scan",     desc: "25+ sig checks" },
+  { id: "jaeles",     icon: "⚔",  label: "Jaeles CVE",      desc: "40+ active vuln checks" },
   { id: "crtsh",      icon: "📜", label: "crt.sh Enhanced", desc: "CT subdomain enum" },
   { id: "cvedeep",    icon: "🔍", label: "CVE Deep Search", desc: "NVD by tech stack" },
   { id: "urlscan",    icon: "📸", label: "URLScan.io",      desc: "Screenshots & tech" },

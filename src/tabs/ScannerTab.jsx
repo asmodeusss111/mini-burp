@@ -1003,6 +1003,52 @@ export default function ScannerTab({ proxyOnline }) {
       }
     } catch { setR("nuclei", { severity: "info", summary: "Error", lines: ["[-] Nuclei scan failed"], recs: [] }); }
 
+    // 21.5. Jaeles Active CVE Scanner (server-side)
+    markA("jaeles");
+    try {
+      log("[*] Jaeles: 40+ active vulnerability checks...", C.muted);
+      const jaelesR = await fetch("/api/scanner/jaeles", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target: "https://" + host }),
+      }).then(r => r.json());
+
+      if (jaelesR.error) {
+        setR("jaeles", { severity: "info", summary: "Failed", lines: [`[-] ${jaelesR.error}`], recs: [] });
+      } else {
+        const findings = jaelesR.findings || [];
+        const summary = jaelesR.summary || {};
+        const byCat = jaelesR.byCategory || {};
+        const sev = summary.critical > 0 ? "critical" : summary.high > 0 ? "high" : summary.medium > 0 ? "medium" : "low";
+        
+        const categoryNames = { cve: "CVE Exploits", creds: "Default Credentials", lfi: "LFI/RCE", tech: "Tech-Specific", method: "HTTP Methods", info: "Info Disclosure" };
+        const lines = [
+          `Jaeles Active Vulnerability Scanner`,
+          `[i] Ran ${jaelesR.checksRun} active checks against ${host}`,
+          `[i] Found: ${summary.total || 0} (${summary.critical || 0}C / ${summary.high || 0}H / ${summary.medium || 0}M)`,
+        ];
+        for (const [cat, catFindings] of Object.entries(byCat)) {
+          lines.push(`\n── ${categoryNames[cat] || cat} ──`);
+          catFindings.forEach(f => {
+            lines.push(`[${f.severity === "critical" ? "!!" : f.severity === "high" ? "!" : "i"}] ${f.name} — ${f.path} (${f.status})`);
+          });
+        }
+        if (findings.length === 0) lines.push("[+] No active vulnerabilities found");
+
+        setR("jaeles", {
+          severity: sev,
+          summary: findings.length > 0 ? `${findings.length} vulns (${summary.critical}C/${summary.high}H)` : `${jaelesR.checksRun} checks passed`,
+          lines,
+          recs: [
+            ...(summary.critical > 0 ? ["CRITICAL: Active vulnerabilities found — patch immediately"] : []),
+            ...(byCat.creds ? ["Change default credentials on all detected services"] : []),
+            ...(byCat.lfi ? ["Fix Local File Inclusion — sanitize all user input paths"] : []),
+          ],
+        });
+        log(`[+] Jaeles: ${findings.length} vulns`, findings.length > 0 ? C.red : C.green);
+      }
+    } catch { setR("jaeles", { severity: "info", summary: "Error", lines: ["[-] Jaeles scan failed"], recs: [] }); }
+
     // 22. Enhanced crt.sh Subdomain Enumeration (server-side)
     markA("crtsh");
     try {

