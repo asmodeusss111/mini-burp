@@ -681,6 +681,379 @@ http.createServer(async (req, res) => {
     }
     return;
   }
+  // ── External Scanner APIs ─────────────────────────────────────────────────────
+
+  // Helper: fetch JSON from external API
+  const extFetch = (url, options = {}) => new Promise((resolve, reject) => {
+    const parsed = new URL(url);
+    const lib = parsed.protocol === "https:" ? https : http;
+    const req = lib.request({
+      hostname: parsed.hostname,
+      port: parsed.port || (parsed.protocol === "https:" ? 443 : 80),
+      path: parsed.pathname + parsed.search,
+      method: options.method || "GET",
+      headers: {
+        "User-Agent": "MiniSherlock/1.0",
+        "Accept": "application/json",
+        ...options.headers,
+      },
+      timeout: 15000,
+      rejectUnauthorized: false,
+    }, (res2) => {
+      let data = "";
+      res2.on("data", c => { if (data.length < 500000) data += c; });
+      res2.on("end", () => {
+        try { resolve({ status: res2.statusCode, data: JSON.parse(data) }); }
+        catch { resolve({ status: res2.statusCode, data, raw: true }); }
+      });
+    });
+    req.on("error", reject);
+    req.on("timeout", () => { req.destroy(); reject(new Error("timeout")); });
+    if (options.body) req.write(options.body);
+    req.end();
+  });
+
+  // 1. GET /api/scanner/cve?query=apache+2.4.49
+  // Search NIST NVD for CVEs by keyword
+  if (path === "/api/scanner/cve") {
+    const query = parsed.searchParams.get("query");
+    if (!query) { send(res, 400, { error: "Missing query param" }); return; }
+    try {
+      const r = await extFetch(`https://services.nvd.nist.gov/rest/json/cves/2.0?keywordSearch=${encodeURIComponent(query)}&resultsPerPage=10`);
+      const cves = (r.data?.vulnerabilities || []).map(v => {
+        const cve = v.cve;
+        const metrics = cve.metrics?.cvssMetricV31?.[0]?.cvssData || cve.metrics?.cvssMetricV2?.[0]?.cvssData || {};
+        return {
+          id: cve.id,
+          description: cve.descriptions?.find(d => d.lang === "en")?.value || "",
+          severity: metrics.baseSeverity || "UNKNOWN",
+          score: metrics.baseScore || 0,
+          published: cve.published,
+          references: (cve.references || []).slice(0, 3).map(r => r.url),
+        };
+      });
+      send(res, 200, { query, total: r.data?.totalResults || 0, cves });
+    } catch (err) {
+      send(res, 200, { error: `CVE lookup failed: ${err.message}` });
+    }
+    return;
+  }
+
+  // 2. GET /api/scanner/exploitdb?cve=CVE-2021-44228
+  // Search ExploitDB via GitLab mirror API
+  if (path === "/api/scanner/exploitdb") {
+    const cve = parsed.searchParams.get("cve");
+    const query = parsed.searchParams.get("query");
+    const search = cve || query;
+    if (!search) { send(res, 400, { error: "Missing cve or query param" }); return; }
+    try {
+      const r = await extFetch(`https://gitlab.com/api/v4/projects/exploit-database%2Fexploitdb/repository/tree?path=exploits&search=${encodeURIComponent(search)}&per_page=20`);
+      const exploits = Array.isArray(r.data) ? r.data.map(e => ({
+        name: e.name,
+        path: e.path,
+        url: `https://www.exploit-db.com/exploits/${e.name.match(/^(\d+)/)?.[1] || ""}`,
+      })).filter(e => e.url.includes("/exploits/")) : [];
+      // Fallback: search via exploit-db.com
+      if (exploits.length === 0) {
+        const r2 = await extFetch(`https://www.exploit-db.com/search?cve=${encodeURIComponent(search)}`).catch(() => null);
+        send(res, 200, { search, exploits: [], note: "No direct API results. Try searching manually at exploit-db.com" });
+      } else {
+        send(res, 200, { search, exploits });
+      }
+    } catch (err) {
+      send(res, 200, { error: `ExploitDB lookup failed: ${err.message}` });
+    }
+    return;
+  }
+
+  // 3. POST /api/scanner/nuclei — Run nuclei-style signature checks against a target
+  if (path === "/api/scanner/nuclei" && req.method === "POST") {
+    let payload;
+    try { payload = JSON.parse(body); } catch { send(res, 400, { error: "Invalid JSON" }); return; }
+    const { target } = payload;
+    if (!target) { send(res, 400, { error: "Missing target" }); return; }
+    const host = target.replace(/^https?:\/\//, "").split("/")[0];
+    if (await isBlockedTarget(host)) { send(res, 403, { error: "Target not allowed" }); return; }
+
+    const baseUrl = target.startsWith("http") ? target : `https://${target}`;
+    const results = [];
+
+    // Signature-based checks (ported from Jaeles/Nuclei patterns)
+    const signatures = [
+      // Sensitive file detection
+      { id: "exposed-env", name: ".env file exposed", path: "/.env", match: /(DB_|API_KEY|SECRET|PASSWORD|APP_KEY)/i, severity: "critical" },
+      { id: "exposed-git", name: "Git directory exposed", path: "/.git/config", match: /\[core\]|\[remote/i, severity: "critical" },
+      { id: "exposed-ds-store", name: "DS_Store exposed", path: "/.DS_Store", match: /Bud1/, severity: "low" },
+      { id: "exposed-htpasswd", name: ".htpasswd exposed", path: "/.htpasswd", match: /\$apr1\$|\$2[ayb]\$|:{SHA}/, severity: "critical" },
+      { id: "exposed-wp-config", name: "wp-config.php exposed", path: "/wp-config.php", match: /DB_NAME|DB_PASSWORD|AUTH_KEY/, severity: "critical" },
+      { id: "exposed-phpinfo", name: "phpinfo() exposed", path: "/phpinfo.php", match: /phpinfo\(\)|PHP Version/, severity: "medium" },
+      { id: "exposed-robots", name: "Robots.txt analysis", path: "/robots.txt", match: /Disallow:/, severity: "info", alwaysReport: true },
+      { id: "exposed-sitemap", name: "Sitemap.xml found", path: "/sitemap.xml", match: /<urlset|<sitemapindex/, severity: "info", alwaysReport: true },
+      // Admin panels
+      { id: "admin-panel", name: "Admin panel detected", path: "/admin", match: /<form|login|admin|password/i, severity: "medium" },
+      { id: "admin-phpmyadmin", name: "phpMyAdmin detected", path: "/phpmyadmin/", match: /phpMyAdmin|pma_/i, severity: "high" },
+      { id: "admin-wp-login", name: "WordPress login", path: "/wp-login.php", match: /wp-login|wordpress/i, severity: "info" },
+      // Server misconfigs
+      { id: "server-status", name: "Apache server-status exposed", path: "/server-status", match: /Apache Server Status|Total Accesses/, severity: "high" },
+      { id: "server-info", name: "Apache server-info exposed", path: "/server-info", match: /Server Information|Apache\//, severity: "high" },
+      { id: "debug-enabled", name: "Debug mode enabled", path: "/", match: /Traceback|DEBUG = True|Laravel|stack trace|at .+\(.+\.js:\d+/i, severity: "medium", checkHeaders: true },
+      // API endpoints
+      { id: "graphql-exposed", name: "GraphQL endpoint exposed", path: "/graphql", match: /query|mutation|__schema|__type/i, severity: "medium" },
+      { id: "swagger-exposed", name: "Swagger/OpenAPI docs exposed", path: "/swagger.json", match: /"swagger"|"openapi"/, severity: "medium" },
+      { id: "swagger-ui", name: "Swagger UI exposed", path: "/swagger-ui/", match: /swagger-ui|Swagger UI/, severity: "medium" },
+      { id: "api-docs", name: "API docs exposed", path: "/api-docs", match: /swagger|openapi|api/i, severity: "info" },
+      // Backup files
+      { id: "backup-sql", name: "SQL backup found", path: "/backup.sql", match: /INSERT INTO|CREATE TABLE|DROP TABLE/, severity: "critical" },
+      { id: "backup-zip", name: "Backup archive found", path: "/backup.zip", match: /PK/, severity: "high", binary: true },
+      // Cloud/Docker misconfigs
+      { id: "docker-compose", name: "docker-compose.yml exposed", path: "/docker-compose.yml", match: /version:|services:|image:/, severity: "critical" },
+      { id: "dockerfile", name: "Dockerfile exposed", path: "/Dockerfile", match: /FROM |RUN |COPY |EXPOSE /, severity: "high" },
+      { id: "aws-credentials", name: "AWS credentials exposed", path: "/.aws/credentials", match: /aws_access_key_id|aws_secret_access_key/i, severity: "critical" },
+    ];
+
+    for (const sig of signatures) {
+      try {
+        const testUrl = baseUrl.replace(/\/$/, "") + sig.path;
+        const r = await extFetch(testUrl).catch(() => null);
+        if (!r) continue;
+        const body = typeof r.data === "string" ? r.data : JSON.stringify(r.data);
+        const matched = sig.match.test(body);
+        if (matched || sig.alwaysReport) {
+          results.push({
+            id: sig.id,
+            name: sig.name,
+            severity: matched ? sig.severity : "info",
+            path: sig.path,
+            status: r.status,
+            matched,
+            snippet: matched ? body.substring(0, 200) : null,
+          });
+        }
+        await new Promise(r => setTimeout(r, 150)); // Rate limiting
+      } catch { /* skip failed checks */ }
+    }
+
+    send(res, 200, { target, checksRun: signatures.length, findings: results });
+    return;
+  }
+
+  // 4. GET /api/scanner/shodan?ip=8.8.8.8&key=xxx
+  if (path === "/api/scanner/shodan") {
+    const ip = parsed.searchParams.get("ip") || parsed.searchParams.get("query");
+    const key = parsed.searchParams.get("key") || process.env.SHODAN_API_KEY;
+    if (!ip) { send(res, 400, { error: "Missing ip param" }); return; }
+    if (!key) { send(res, 400, { error: "Missing Shodan API key. Set SHODAN_API_KEY env or pass ?key=" }); return; }
+    try {
+      const r = await extFetch(`https://api.shodan.io/shodan/host/${encodeURIComponent(ip)}?key=${key}`);
+      if (r.status !== 200) { send(res, 200, { error: `Shodan error: ${JSON.stringify(r.data)}` }); return; }
+      const d = r.data;
+      send(res, 200, {
+        ip: d.ip_str,
+        hostnames: d.hostnames || [],
+        org: d.org,
+        os: d.os,
+        country: d.country_name,
+        city: d.city,
+        ports: d.ports || [],
+        vulns: d.vulns || [],
+        services: (d.data || []).slice(0, 10).map(s => ({
+          port: s.port,
+          transport: s.transport,
+          product: s.product,
+          version: s.version,
+          banner: (s.data || "").substring(0, 300),
+        })),
+      });
+    } catch (err) {
+      send(res, 200, { error: `Shodan lookup failed: ${err.message}` });
+    }
+    return;
+  }
+
+  // 5. GET /api/scanner/virustotal?domain=example.com&key=xxx
+  if (path === "/api/scanner/virustotal") {
+    const domain = parsed.searchParams.get("domain") || parsed.searchParams.get("ip");
+    const key = parsed.searchParams.get("key") || process.env.VT_API_KEY;
+    if (!domain) { send(res, 400, { error: "Missing domain param" }); return; }
+    if (!key) { send(res, 400, { error: "Missing VirusTotal API key. Set VT_API_KEY env or pass ?key=" }); return; }
+    try {
+      const type = /^\d+\.\d+\.\d+\.\d+$/.test(domain) ? "ip_addresses" : "domains";
+      const r = await extFetch(`https://www.virustotal.com/api/v3/${type}/${encodeURIComponent(domain)}`, {
+        headers: { "x-apikey": key },
+      });
+      if (r.status !== 200) { send(res, 200, { error: `VirusTotal error: ${r.status}` }); return; }
+      const attrs = r.data?.data?.attributes || {};
+      send(res, 200, {
+        domain,
+        reputation: attrs.reputation,
+        malicious: attrs.last_analysis_stats?.malicious || 0,
+        suspicious: attrs.last_analysis_stats?.suspicious || 0,
+        clean: attrs.last_analysis_stats?.harmless || 0,
+        categories: attrs.categories || {},
+        lastAnalysis: attrs.last_analysis_date,
+        whois: attrs.whois ? attrs.whois.substring(0, 500) : null,
+      });
+    } catch (err) {
+      send(res, 200, { error: `VirusTotal lookup failed: ${err.message}` });
+    }
+    return;
+  }
+
+  // 6. GET /api/scanner/urlscan?domain=example.com
+  if (path === "/api/scanner/urlscan") {
+    const domain = parsed.searchParams.get("domain");
+    if (!domain) { send(res, 400, { error: "Missing domain param" }); return; }
+    try {
+      const r = await extFetch(`https://urlscan.io/api/v1/search/?q=domain:${encodeURIComponent(domain)}&size=5`);
+      const results = (r.data?.results || []).map(r => ({
+        url: r.page?.url,
+        ip: r.page?.ip,
+        server: r.page?.server,
+        title: r.page?.title,
+        status: r.page?.status,
+        screenshot: r.screenshot,
+        technologies: r.page?.technologies || [],
+        date: r.task?.time,
+      }));
+      send(res, 200, { domain, results });
+    } catch (err) {
+      send(res, 200, { error: `URLScan lookup failed: ${err.message}` });
+    }
+    return;
+  }
+
+  // 7. GET /api/scanner/abuseipdb?ip=8.8.8.8&key=xxx
+  if (path === "/api/scanner/abuseipdb") {
+    const ip = parsed.searchParams.get("ip");
+    const key = parsed.searchParams.get("key") || process.env.ABUSEIPDB_API_KEY;
+    if (!ip) { send(res, 400, { error: "Missing ip param" }); return; }
+    if (!key) { send(res, 400, { error: "Missing AbuseIPDB API key. Set ABUSEIPDB_API_KEY env or pass ?key=" }); return; }
+    try {
+      const r = await extFetch(`https://api.abuseipdb.com/api/v2/check?ipAddress=${encodeURIComponent(ip)}&maxAgeInDays=90&verbose`, {
+        headers: { "Key": key, "Accept": "application/json" },
+      });
+      const d = r.data?.data || {};
+      send(res, 200, {
+        ip: d.ipAddress,
+        isPublic: d.isPublic,
+        abuseScore: d.abuseConfidenceScore,
+        country: d.countryCode,
+        isp: d.isp,
+        domain: d.domain,
+        totalReports: d.totalReports,
+        lastReported: d.lastReportedAt,
+        usageType: d.usageType,
+      });
+    } catch (err) {
+      send(res, 200, { error: `AbuseIPDB lookup failed: ${err.message}` });
+    }
+    return;
+  }
+
+  // 8. GET /api/scanner/securitytrails?domain=example.com&key=xxx
+  if (path === "/api/scanner/securitytrails") {
+    const domain = parsed.searchParams.get("domain");
+    const key = parsed.searchParams.get("key") || process.env.SECURITYTRAILS_API_KEY;
+    if (!domain) { send(res, 400, { error: "Missing domain param" }); return; }
+    if (!key) { send(res, 400, { error: "Missing SecurityTrails API key. Set SECURITYTRAILS_API_KEY env or pass ?key=" }); return; }
+    try {
+      // Get domain info + subdomains
+      const [info, subs] = await Promise.all([
+        extFetch(`https://api.securitytrails.com/v1/domain/${encodeURIComponent(domain)}`, { headers: { APIKEY: key } }),
+        extFetch(`https://api.securitytrails.com/v1/domain/${encodeURIComponent(domain)}/subdomains?children_only=true`, { headers: { APIKEY: key } }),
+      ]);
+      send(res, 200, {
+        domain,
+        info: info.data,
+        subdomains: (subs.data?.subdomains || []).slice(0, 50).map(s => `${s}.${domain}`),
+      });
+    } catch (err) {
+      send(res, 200, { error: `SecurityTrails lookup failed: ${err.message}` });
+    }
+    return;
+  }
+
+  // 9. GET /api/scanner/censys?query=example.com&key=xxx&secret=xxx
+  if (path === "/api/scanner/censys") {
+    const query = parsed.searchParams.get("query");
+    const apiId = parsed.searchParams.get("key") || process.env.CENSYS_API_ID;
+    const apiSecret = parsed.searchParams.get("secret") || process.env.CENSYS_API_SECRET;
+    if (!query) { send(res, 400, { error: "Missing query param" }); return; }
+    if (!apiId || !apiSecret) { send(res, 400, { error: "Missing Censys API ID/Secret. Set CENSYS_API_ID and CENSYS_API_SECRET env vars" }); return; }
+    try {
+      const auth = Buffer.from(`${apiId}:${apiSecret}`).toString("base64");
+      const r = await extFetch("https://search.censys.io/api/v2/hosts/search", {
+        method: "POST",
+        headers: {
+          "Authorization": `Basic ${auth}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ q: query, per_page: 10 }),
+      });
+      const hits = (r.data?.result?.hits || []).map(h => ({
+        ip: h.ip,
+        services: (h.services || []).map(s => ({
+          port: s.port,
+          name: s.service_name,
+          transport: s.transport_protocol,
+          banner: s.banner,
+        })),
+        location: h.location,
+        os: h.operating_system,
+      }));
+      send(res, 200, { query, total: r.data?.result?.total || 0, hits });
+    } catch (err) {
+      send(res, 200, { error: `Censys lookup failed: ${err.message}` });
+    }
+    return;
+  }
+
+  // 10. GET /api/scanner/crtsh?domain=example.com (enhanced crt.sh)
+  if (path === "/api/scanner/crtsh") {
+    const domain = parsed.searchParams.get("domain");
+    if (!domain) { send(res, 400, { error: "Missing domain param" }); return; }
+    try {
+      const r = await extFetch(`https://crt.sh/?q=%25.${encodeURIComponent(domain)}&output=json`);
+      const certs = Array.isArray(r.data) ? r.data : [];
+      const subdomains = [...new Set(certs.map(c => c.name_value).flatMap(n => n.split("\n")).map(s => s.trim().toLowerCase()).filter(s => s.endsWith(domain) && !s.startsWith("*")))].sort();
+      send(res, 200, {
+        domain,
+        totalCerts: certs.length,
+        uniqueSubdomains: subdomains.length,
+        subdomains,
+        recentCerts: certs.slice(0, 10).map(c => ({
+          issuer: c.issuer_name,
+          commonName: c.common_name,
+          notBefore: c.not_before,
+          notAfter: c.not_after,
+          names: c.name_value,
+        })),
+      });
+    } catch (err) {
+      send(res, 200, { error: `crt.sh lookup failed: ${err.message}` });
+    }
+    return;
+  }
+
+  // GET /api/scanner/list — list all available scanners
+  if (path === "/api/scanner/list") {
+    send(res, 200, {
+      scanners: [
+        { id: "cve", name: "CVE/NVD Search", endpoint: "/api/scanner/cve?query=", free: true, description: "Search NIST NVD for CVEs by keyword (software, version)" },
+        { id: "exploitdb", name: "ExploitDB", endpoint: "/api/scanner/exploitdb?cve=", free: true, description: "Search for public exploits by CVE ID or keyword" },
+        { id: "nuclei", name: "Nuclei Signatures", endpoint: "/api/scanner/nuclei (POST)", free: true, description: "Run 25+ nuclei-style checks: exposed files, admin panels, misconfigs, backup files" },
+        { id: "crtsh", name: "crt.sh Enhanced", endpoint: "/api/scanner/crtsh?domain=", free: true, description: "Certificate Transparency subdomain enumeration" },
+        { id: "urlscan", name: "URLScan.io", endpoint: "/api/scanner/urlscan?domain=", free: true, description: "Website screenshots, technologies, IP info" },
+        { id: "shodan", name: "Shodan", endpoint: "/api/scanner/shodan?ip=&key=", free: false, description: "Port scanning, service detection, CVE mapping" },
+        { id: "virustotal", name: "VirusTotal", endpoint: "/api/scanner/virustotal?domain=&key=", free: false, description: "Malware/phishing reputation analysis" },
+        { id: "abuseipdb", name: "AbuseIPDB", endpoint: "/api/scanner/abuseipdb?ip=&key=", free: false, description: "IP abuse/spam/attack reports" },
+        { id: "securitytrails", name: "SecurityTrails", endpoint: "/api/scanner/securitytrails?domain=&key=", free: false, description: "Deep DNS recon, historical records, subdomains" },
+        { id: "censys", name: "Censys", endpoint: "/api/scanner/censys?query=&key=&secret=", free: false, description: "Certificate and service search engine" },
+      ],
+    });
+    return;
+  }
+
   // GET /health
   if (path === "/health") {
     const s = Object.fromEntries(allStats.all().map(r => [r.key, r.value]));
