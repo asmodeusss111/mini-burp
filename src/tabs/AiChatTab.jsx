@@ -155,6 +155,7 @@ export default function AiChatTab({ adminPass }) {
   const [showSettings, setShowSettings] = useState(!localStorage.getItem("openrouter_key"));
   const [error, setError] = useState("");
   const [tokenCount, setTokenCount] = useState(0);
+  const [scanTarget, setScanTarget] = useState("");
   const chatEndRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -317,6 +318,42 @@ export default function AiChatTab({ adminPass }) {
       sendMessage(prompt);
     } catch (err) {
       setError(err.message);
+      setLoading(false);
+    }
+  };
+
+  const runScannerForAI = async (scannerId, target) => {
+    if (!target?.trim()) { setError("Введи таргет для сканирования"); return; }
+    const host = target.trim().replace(/^https?:\/\//, "").split("/")[0];
+    setLoading(true);
+    setError("");
+    try {
+      let result;
+      const scanners = {
+        nuclei: { method: "POST", url: "/api/scanner/nuclei", body: { target: "https://" + host } },
+        jaeles: { method: "POST", url: "/api/scanner/jaeles", body: { target: "https://" + host } },
+        cve: { url: `/api/scanner/cve?query=${encodeURIComponent(host)}` },
+        crtsh: { url: `/api/scanner/crtsh?domain=${encodeURIComponent(host)}` },
+        urlscan: { url: `/api/scanner/urlscan?domain=${encodeURIComponent(host)}` },
+        shodan: { url: `/api/scanner/shodan?ip=${encodeURIComponent(host)}` },
+        censys: { url: `/api/scanner/censys?query=${encodeURIComponent(host)}` },
+        exploitdb: { url: `/api/scanner/exploitdb?query=${encodeURIComponent(host)}` },
+        virustotal: { url: `/api/scanner/virustotal?domain=${encodeURIComponent(host)}` },
+        abuseipdb: { url: `/api/scanner/abuseipdb?ip=${encodeURIComponent(host)}` },
+      };
+      const cfg = scanners[scannerId];
+      if (!cfg) throw new Error("Unknown scanner: " + scannerId);
+      
+      const fetchOpts = cfg.method === "POST" 
+        ? { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(cfg.body) }
+        : {};
+      result = await fetch(cfg.url, fetchOpts).then(r => r.json());
+
+      const scannerNames = { nuclei: "Nuclei", jaeles: "Jaeles CVE", cve: "CVE/NVD", crtsh: "crt.sh", urlscan: "URLScan.io", shodan: "Shodan", censys: "Censys", exploitdb: "ExploitDB", virustotal: "VirusTotal", abuseipdb: "AbuseIPDB" };
+      const prompt = `Я запустил сканер **${scannerNames[scannerId]}** на таргет **${host}**. Вот результаты:\n\n\`\`\`json\n${JSON.stringify(result, null, 2)}\n\`\`\`\n\nПроанализируй результаты: что критично, что нужно исправить срочно, какие следующие шаги?`;
+      sendMessage(prompt);
+    } catch (err) {
+      setError("Scan failed: " + err.message);
       setLoading(false);
     }
   };
@@ -741,6 +778,34 @@ export default function AiChatTab({ adminPass }) {
               <button className="ai-quick-btn" onClick={() => sendMessage("Расскажи про DNS resolution")}>📡 DNS</button>
             </>
           )}
+        </div>
+      )}
+
+      {/* Scanner quick-launch bar */}
+      {mode === "security" && !loading && (
+        <div style={{
+          display: "flex", gap: 6, padding: "6px 14px", borderTop: `1px solid ${C.border}20`,
+          background: C.panel, flexShrink: 0, flexWrap: "wrap", alignItems: "center",
+        }}>
+          <input
+            value={scanTarget}
+            onChange={e => setScanTarget(e.target.value)}
+            placeholder="target.com / IP"
+            style={{
+              background: C.bg, border: `1px solid ${C.border}`, borderRadius: 4,
+              color: C.text, fontFamily: "monospace", fontSize: 11, padding: "4px 8px",
+              width: 130, outline: "none",
+            }}
+            onKeyDown={e => e.key === "Enter" && scanTarget.trim() && runScannerForAI("nuclei", scanTarget)}
+          />
+          <button className="ai-quick-btn" onClick={() => runScannerForAI("nuclei", scanTarget)}>☢ Nuclei</button>
+          <button className="ai-quick-btn" onClick={() => runScannerForAI("jaeles", scanTarget)}>⚔ Jaeles</button>
+          <button className="ai-quick-btn" onClick={() => runScannerForAI("shodan", scanTarget)}>🔭 Shodan</button>
+          <button className="ai-quick-btn" onClick={() => runScannerForAI("crtsh", scanTarget)}>📜 crt.sh</button>
+          <button className="ai-quick-btn" onClick={() => runScannerForAI("cve", scanTarget)}>🔍 CVE</button>
+          <button className="ai-quick-btn" onClick={() => runScannerForAI("urlscan", scanTarget)}>📸 URLScan</button>
+          <button className="ai-quick-btn" onClick={() => runScannerForAI("exploitdb", scanTarget)}>💣 ExploitDB</button>
+          <button className="ai-quick-btn" onClick={() => runScannerForAI("censys", scanTarget)}>🔬 Censys</button>
         </div>
       )}
 
