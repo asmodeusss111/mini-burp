@@ -969,6 +969,144 @@ export default function ScannerTab({ proxyOnline }) {
       log(`[+] DNS Brute: ${foundSub.length} found`, foundSub.length > 0 ? C.yellow : C.green);
     } catch { setR("dnsbrute", { severity: "info", summary: "Error", lines: ["[-] Failed"], recs: [] }); }
 
+    // 21. Nuclei-style Signature Scanner (server-side)
+    markA("nuclei");
+    try {
+      log("[*] Nuclei scan: 25+ signature checks...", C.muted);
+      const nucleiR = await fetch("/api/scanner/nuclei", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ target: "https://" + host }),
+      }).then(r => r.json());
+
+      if (nucleiR.error) {
+        setR("nuclei", { severity: "info", summary: "Failed", lines: [`[-] ${nucleiR.error}`], recs: [] });
+      } else {
+        const findings = nucleiR.findings || [];
+        const matched = findings.filter(f => f.matched);
+        const crits = matched.filter(f => f.severity === "critical");
+        const highs = matched.filter(f => f.severity === "high");
+        const sev = crits.length > 0 ? "critical" : highs.length > 0 ? "high" : matched.length > 0 ? "medium" : "low";
+        setR("nuclei", {
+          severity: sev,
+          summary: matched.length > 0 ? `${matched.length} findings (${crits.length}C/${highs.length}H)` : `${nucleiR.checksRun} checks passed`,
+          lines: [
+            `Nuclei Signature Scanner`,
+            `[i] Ran ${nucleiR.checksRun} checks against ${host}`,
+            `[i] Matched: ${matched.length} | Info: ${findings.length - matched.length}`,
+            ...matched.map(f => `[${f.severity === "critical" ? "!!" : "!"}] ${f.name} (${f.severity}) — ${f.path}`),
+            ...findings.filter(f => !f.matched && f.status === 200).map(f => `[i] ${f.name} — ${f.path} (${f.status})`),
+          ],
+          recs: matched.map(f => `Fix: ${f.name} at ${f.path}`),
+        });
+        log(`[+] Nuclei: ${matched.length} findings`, matched.length > 0 ? C.red : C.green);
+      }
+    } catch { setR("nuclei", { severity: "info", summary: "Error", lines: ["[-] Nuclei scan failed"], recs: [] }); }
+
+    // 22. Enhanced crt.sh Subdomain Enumeration (server-side)
+    markA("crtsh");
+    try {
+      const crtR = await fetch(`/api/scanner/crtsh?domain=${encodeURIComponent(host)}`).then(r => r.json());
+      if (crtR.error) {
+        setR("crtsh", { severity: "info", summary: "Failed", lines: [`[-] ${crtR.error}`], recs: [] });
+      } else {
+        const subs = crtR.subdomains || [];
+        setR("crtsh", {
+          severity: subs.length > 20 ? "medium" : "info",
+          summary: `${subs.length} unique subdomains from ${crtR.totalCerts} certs`,
+          lines: [
+            `Enhanced crt.sh (Certificate Transparency)`,
+            `[i] Total certificates: ${crtR.totalCerts}`,
+            `[i] Unique subdomains: ${subs.length}`,
+            ...subs.slice(0, 20).map(s => `[+] ${s}`),
+            subs.length > 20 ? `[i] ...+${subs.length - 20} more` : "",
+            ...(crtR.recentCerts || []).slice(0, 3).map(c => `[i] Cert: ${c.commonName} (${c.notBefore} → ${c.notAfter})`),
+          ].filter(Boolean),
+          recs: subs.length > 20 ? ["Audit all subdomains — large attack surface"] : [],
+        });
+        log(`[+] crt.sh: ${subs.length} subdomains`, C.blue);
+      }
+    } catch { setR("crtsh", { severity: "info", summary: "Error", lines: ["[-] crt.sh failed"], recs: [] }); }
+
+    // 23. CVE Deep Search (based on detected technologies)
+    markA("cvedeep");
+    try {
+      const techResults = localResults["tech"];
+      const rawTechs = techResults?.raw || [];
+      if (rawTechs.length === 0) {
+        setR("cvedeep", {
+          severity: "info",
+          summary: "No techs detected",
+          lines: ["[i] CVE Deep Search requires technology detection first"],
+          recs: [],
+        });
+        log("[i] CVE Deep: skipped (no tech)", C.muted);
+      } else {
+        const allCves = [];
+        for (const t of rawTechs) {
+          const query = t.ver ? `${t.n} ${t.ver}` : t.n;
+          try {
+            const r = await fetch(`/api/scanner/cve?query=${encodeURIComponent(query)}`).then(r => r.json());
+            if (r.cves) {
+              r.cves.forEach(cve => allCves.push({ ...cve, tech: t.n, ver: t.ver }));
+            }
+          } catch {}
+          await new Promise(r => setTimeout(r, 800)); // NVD rate limit
+        }
+        const critCves = allCves.filter(c => c.score >= 9);
+        const highCves = allCves.filter(c => c.score >= 7 && c.score < 9);
+        const sev = critCves.length > 0 ? "critical" : highCves.length > 0 ? "high" : allCves.length > 0 ? "medium" : "low";
+        setR("cvedeep", {
+          severity: sev,
+          summary: `${allCves.length} CVEs found (${critCves.length}C/${highCves.length}H)`,
+          lines: [
+            `CVE Deep Search (NVD)`,
+            `[i] Searched for: ${rawTechs.map(t => t.n).join(", ")}`,
+            `[i] Total CVEs: ${allCves.length}`,
+            ...allCves.slice(0, 15).map(c =>
+              `[${c.score >= 9 ? "!!" : c.score >= 7 ? "!" : "i"}] ${c.id} (${c.severity}, ${c.score}) — ${c.tech}${c.ver ? ` v${c.ver}` : ""}`
+            ),
+            allCves.length > 15 ? `[i] ...+${allCves.length - 15} more` : "",
+            ...allCves.slice(0, 3).map(c => `    ${c.description?.slice(0, 100)}...`),
+          ].filter(Boolean),
+          recs: allCves.length > 0 ? ["Update affected software to patched versions", "Check references for specific mitigations"] : [],
+        });
+        log(`[+] CVE Deep: ${allCves.length} found`, allCves.length > 0 ? C.red : C.green);
+      }
+    } catch { setR("cvedeep", { severity: "info", summary: "Error", lines: ["[-] CVE search failed"], recs: [] }); }
+
+    // 24. URLScan.io
+    markA("urlscan");
+    try {
+      const urlsR = await fetch(`/api/scanner/urlscan?domain=${encodeURIComponent(host)}`).then(r => r.json());
+      if (urlsR.error) {
+        setR("urlscan", { severity: "info", summary: "Failed", lines: [`[-] ${urlsR.error}`], recs: [] });
+      } else {
+        const scans = urlsR.results || [];
+        if (scans.length === 0) {
+          setR("urlscan", { severity: "info", summary: "No scans found", lines: ["[i] No previous URLScan.io scans for this domain"], recs: [] });
+        } else {
+          const latest = scans[0];
+          setR("urlscan", {
+            severity: "info",
+            summary: `${scans.length} scans found`,
+            lines: [
+              `URLScan.io Results`,
+              `[i] Latest: ${latest.url || host}`,
+              `[i] IP: ${latest.ip || "?"}`,
+              `[i] Server: ${latest.server || "?"}`,
+              `[i] Title: ${latest.title || "?"}`,
+              `[i] Status: ${latest.status || "?"}`,
+              latest.screenshot ? `[i] Screenshot: ${latest.screenshot}` : "",
+              ...scans.slice(0, 5).map(s => `[+] ${s.date || "?"} — ${s.url || host} (${s.status || "?"})`),
+            ].filter(Boolean),
+            recs: [],
+          });
+        }
+        log(`[+] URLScan: ${scans.length} results`, C.blue);
+      }
+    } catch { setR("urlscan", { severity: "info", summary: "Error", lines: ["[-] URLScan failed"], recs: [] }); }
+
     // 18. Security Scorer & Scan Diff Engine
     markA("score");
     markA("diff");
@@ -997,7 +1135,7 @@ export default function ScannerTab({ proxyOnline }) {
 
       // Penalties (only real findings)
       Object.keys(localResults).forEach(k => {
-        if (["waf", "headers", "ssl", "email", "tech", "whois", "diff", "score", "dns", "dnsbrute", "robots", "ip", "cors", "clickjack"].includes(k)) return;
+        if (["waf", "headers", "ssl", "email", "tech", "whois", "diff", "score", "dns", "dnsbrute", "robots", "ip", "cors", "clickjack", "crtsh", "urlscan"].includes(k)) return;
         const r = localResults[k];
         if (r.severity === "critical") { scoreNum -= 30; penaltySum += 30; penaltyReasons.push(k); }
         else if (r.severity === "high") { scoreNum -= 15; penaltySum += 15; penaltyReasons.push(k); }
