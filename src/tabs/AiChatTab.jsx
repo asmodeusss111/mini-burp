@@ -92,7 +92,15 @@ function renderMarkdown(text) {
   let html = text;
   // Code blocks with language
   html = html.replace(/```(\w+)?\n([\s\S]*?)```/g, (_, lang, code) => {
-    return `<div class="ai-code-block"><div class="ai-code-lang">${lang || "code"}</div><pre><code>${escHtml(code.trim())}</code></pre></div>`;
+    const cleanCode = code.trim();
+    return `
+      <div class="ai-code-block">
+        <div class="ai-code-header">
+          <div class="ai-code-lang">${lang || "code"}</div>
+          <button class="ai-copy-btn" data-copy="${escHtml(cleanCode)}">Copy</button>
+        </div>
+        <pre><code>${escHtml(cleanCode)}</code></pre>
+      </div>`;
   });
   // Inline code
   html = html.replace(/`([^`]+)`/g, '<code class="ai-inline-code">$1</code>');
@@ -177,18 +185,19 @@ export default function AiChatTab({ adminPass }) {
     }
   };
 
-  const sendMessage = async () => {
-    if (!input.trim() || loading) return;
+  const sendMessage = async (overrideText, isRegenerate) => {
+    const text = overrideText || input.trim();
+    if (!text || loading) return;
     if (!apiKey) {
       setError("Сначала введи OpenRouter API ключ в настройках");
       setShowSettings(true);
       return;
     }
 
-    const userMsg = { role: "user", content: input.trim() };
-    const newMessages = [...messages, userMsg];
+    const userMsg = { role: "user", content: text };
+    const newMessages = isRegenerate ? [...messages, userMsg] : [...messages, userMsg];
     setMessages(newMessages);
-    setInput("");
+    if (!overrideText) setInput("");
     setLoading(true);
     setError("");
 
@@ -220,31 +229,96 @@ export default function AiChatTab({ adminPass }) {
         throw new Error(err.error || `HTTP ${r.status}`);
       }
 
-      const data = await r.json();
-
-      if (data.error) {
-        throw new Error(data.error);
-      }
-
-      const assistantMsg = {
-        role: "assistant",
-        content: data.content || "Пустой ответ от модели",
-      };
+      // Prepare assistant message placeholder
+      const assistantMsg = { role: "assistant", content: "" };
       setMessages(prev => [...prev, assistantMsg]);
 
-      if (data.usage) {
-        setTokenCount(prev => prev + (data.usage.total_tokens || 0));
+      const reader = r.body.getReader();
+      const decoder = new TextDecoder();
+      let fullContent = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
+        // SSE chunks are usually "data: {...}\n\n"
+        const lines = chunk.split("\n");
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const dataStr = line.slice(6).trim();
+            if (dataStr === "[DONE]") break;
+            try {
+              const data = JSON.parse(dataStr);
+              const delta = data.choices?.[0]?.delta?.content || "";
+              if (delta) {
+                fullContent += delta;
+                setMessages(prev => {
+                  const next = [...prev];
+                  next[next.length - 1] = { ...next[next.length - 1], content: fullContent };
+                  return next;
+                });
+              }
+              if (data.usage) {
+                setTokenCount(prev => prev + (data.usage.total_tokens || 0));
+              }
+            } catch (e) {
+              // Ignore non-json or incomplete chunks
+            }
+          }
+        }
       }
     } catch (err) {
       setError(err.message);
-      setMessages(prev => [...prev, {
-        role: "assistant",
-        content: `❌ **Ошибка:** ${err.message}`,
-      }]);
+      setMessages(prev => {
+        const next = [...prev];
+        // If the last message was the one being streamed, update it. Otherwise add new.
+        if (next.length > 0 && next[next.length - 1].role === "assistant" && next[next.length - 1].content.startsWith("❌")) {
+           return next;
+        }
+        return [...prev, {
+          role: "assistant",
+          content: `❌ **Ошибка:** ${err.message}`,
+        }];
+      });
     }
 
     setLoading(false);
     setTimeout(() => inputRef.current?.focus(), 100);
+  };
+
+  const regenerateLast = () => {
+    if (messages.length < 2) return;
+    const lastUserMsg = [...messages].reverse().find(m => m.role === "user");
+    if (!lastUserMsg) return;
+
+    // Remove last assistant message
+    setMessages(prev => {
+      const last = prev[prev.length - 1];
+      if (last.role === "assistant") return prev.slice(0, -1);
+      return prev;
+    });
+    // Trigger send with same logic
+    sendMessage(lastUserMsg.content, true);
+  };
+
+  const analyzeLastScan = async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/health");
+      const data = await res.json();
+      const lastScan = data.recent?.scans?.[0];
+      if (!lastScan) {
+        throw new Error("Последних сканирований не найдено");
+      }
+      const prompt = `Проанализируй последний результат сканирования для хоста ${lastScan.host}.
+Открытые порты: ${lastScan.open_ports}.
+Что ты можешь сказать об этом таргете? Какие следующие шаги предпринять?`;
+      sendMessage(prompt);
+    } catch (err) {
+      setError(err.message);
+      setLoading(false);
+    }
   };
 
   const clearChat = () => {
@@ -254,12 +328,39 @@ export default function AiChatTab({ adminPass }) {
     setTokenCount(0);
   };
 
+  const copyToClipboard = (text) => {
+    navigator.clipboard.writeText(text);
+    // Simple toast-like feedback could go here
+  };
+
   const handleKeyDown = (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       sendMessage();
     }
   };
+
+  // Attach global click listener for Copy buttons within markdown
+  useEffect(() => {
+    const handleGlobalClick = (e) => {
+      const btn = e.target.closest(".ai-copy-btn");
+      if (btn) {
+        const text = btn.getAttribute("data-copy");
+        if (text) {
+          copyToClipboard(text);
+          const original = btn.innerHTML;
+          btn.innerHTML = "✅ Done";
+          btn.style.borderColor = C.green;
+          setTimeout(() => {
+            btn.innerHTML = original;
+            btn.style.borderColor = "";
+          }, 2000);
+        }
+      }
+    };
+    document.addEventListener("click", handleGlobalClick);
+    return () => document.removeEventListener("click", handleGlobalClick);
+  }, []);
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: 0 }}>
@@ -271,13 +372,33 @@ export default function AiChatTab({ adminPass }) {
           margin: 8px 0;
           overflow: hidden;
         }
-        .ai-code-lang {
+        .ai-code-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
           background: ${C.border};
           padding: 2px 10px;
+        }
+        .ai-code-lang {
           font-size: 10px;
           color: ${C.muted};
           font-family: monospace;
           text-transform: uppercase;
+        }
+        .ai-copy-btn {
+          background: transparent;
+          border: 1px solid ${C.muted}40;
+          color: ${C.muted};
+          padding: 1px 8px;
+          border-radius: 3px;
+          font-size: 10px;
+          font-family: monospace;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .ai-copy-btn:hover {
+          color: ${C.accent};
+          border-color: ${C.accent};
         }
         .ai-code-block pre {
           padding: 12px;
@@ -311,6 +432,54 @@ export default function AiChatTab({ adminPass }) {
           background: linear-gradient(135deg, ${C.blue}10, ${C.blue}05);
           border-left: 3px solid ${C.blue}60;
           border-radius: 0 8px 8px 0;
+          position: relative;
+        }
+        .ai-msg-actions {
+          display: flex;
+          gap: 6px;
+          margin-top: 8px;
+          padding-top: 6px;
+          border-top: 1px solid ${C.border}30;
+        }
+        .ai-msg-action-btn {
+          background: transparent;
+          border: 1px solid ${C.border};
+          color: ${C.muted};
+          padding: 2px 8px;
+          border-radius: 4px;
+          font-size: 10px;
+          font-family: monospace;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .ai-msg-action-btn:hover {
+          color: ${C.accent};
+          border-color: ${C.accent};
+        }
+        .ai-quick-actions {
+          display: flex;
+          gap: 6px;
+          padding: 6px 14px;
+          border-top: 1px solid ${C.border}30;
+          background: ${C.panel};
+          flex-shrink: 0;
+          flex-wrap: wrap;
+        }
+        .ai-quick-btn {
+          background: ${C.bg};
+          border: 1px solid ${C.border};
+          color: ${C.muted};
+          padding: 4px 10px;
+          border-radius: 12px;
+          font-size: 10px;
+          font-family: monospace;
+          cursor: pointer;
+          transition: all 0.2s;
+        }
+        .ai-quick-btn:hover {
+          color: ${C.accent};
+          border-color: ${C.accent};
+          background: ${C.accent}10;
         }
         .ai-typing-dot {
           display: inline-block;
@@ -498,10 +667,24 @@ export default function AiChatTab({ adminPass }) {
               )}
             </div>
             <div dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }} />
+            {msg.role === "assistant" && i > 0 && !loading && msg.content && (
+              <div className="ai-msg-actions">
+                <button
+                  className="ai-msg-action-btn"
+                  onClick={() => copyToClipboard(msg.content)}
+                >📋 Copy</button>
+                {i === messages.length - 1 && (
+                  <button
+                    className="ai-msg-action-btn"
+                    onClick={regenerateLast}
+                  >🔄 Regenerate</button>
+                )}
+              </div>
+            )}
           </div>
         ))}
 
-        {loading && (
+        {loading && !messages[messages.length - 1]?.content?.length && (
           <div className="ai-msg-assistant" style={{ padding: "12px 14px" }}>
             <div style={{ fontSize: 10, color: C.muted, marginBottom: 6 }}>🤖 AI</div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
@@ -530,6 +713,34 @@ export default function AiChatTab({ adminPass }) {
           flexShrink: 0,
         }}>
           ⚠ {error}
+        </div>
+      )}
+
+      {/* Quick actions */}
+      {!loading && messages.length <= 1 && (
+        <div className="ai-quick-actions">
+          {mode === "security" && (
+            <>
+              <button className="ai-quick-btn" onClick={analyzeLastScan}>🔍 Analyze Last Scan</button>
+              <button className="ai-quick-btn" onClick={() => sendMessage("Какие основные техники WAF bypass для XSS?")}>🛡 WAF Bypass</button>
+              <button className="ai-quick-btn" onClick={() => sendMessage("Покажи чеклист для пентеста веб-приложения")}>📋 Pentest Checklist</button>
+              <button className="ai-quick-btn" onClick={() => sendMessage("Объясни OWASP Top 10 в контексте реальных атак")}>🏆 OWASP Top 10</button>
+            </>
+          )}
+          {mode === "code" && (
+            <>
+              <button className="ai-quick-btn" onClick={() => sendMessage("Review мой server.js — какие проблемы ты видишь?")}>🔍 Review server.js</button>
+              <button className="ai-quick-btn" onClick={() => sendMessage("Как добавить новый API endpoint в server.js?")}>➕ New Endpoint</button>
+              <button className="ai-quick-btn" onClick={() => sendMessage("Какие оптимизации производительности можно сделать?")}>⚡ Optimize</button>
+            </>
+          )}
+          {mode === "general" && (
+            <>
+              <button className="ai-quick-btn" onClick={() => sendMessage("Что такое CORS и как он работает?")}>🌐 CORS</button>
+              <button className="ai-quick-btn" onClick={() => sendMessage("Объясни как работает JWT")}>🔑 JWT</button>
+              <button className="ai-quick-btn" onClick={() => sendMessage("Расскажи про DNS resolution")}>📡 DNS</button>
+            </>
+          )}
         </div>
       )}
 

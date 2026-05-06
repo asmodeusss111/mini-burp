@@ -605,6 +605,7 @@ http.createServer(async (req, res) => {
             model: chatModel || "google/gemma-3-27b-it:free",
             messages: chatMessages,
             max_tokens: 4096,
+            stream: true, // Enable streaming
           }),
         });
 
@@ -614,18 +615,33 @@ http.createServer(async (req, res) => {
           return;
         }
 
-        const orData = await orResponse.json();
-        if (orData.choices && orData.choices.length > 0 && orData.choices[0].message) {
-          send(res, 200, {
-            content: orData.choices[0].message.content,
-            usage: orData.usage || null,
-            model: orData.model || chatModel,
-          });
-        } else {
-          send(res, 200, { error: "Unexpected response format from OpenRouter", raw: orData });
+        // Set up SSE headers
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+          "Access-Control-Allow-Origin": "*",
+        });
+
+        // Use node-fetch/undici stream
+        const reader = orResponse.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          res.write(chunk);
         }
+
+        res.end();
       } catch (err) {
-        send(res, 200, { error: `Request failed: ${err.message}` });
+        // If headers weren't sent yet, send JSON error. Otherwise just end the stream.
+        if (!res.headersSent) {
+          send(res, 200, { error: `Request failed: ${err.message}` });
+        } else {
+          res.end();
+        }
       }
       return;
     }
