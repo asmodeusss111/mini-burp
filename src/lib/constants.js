@@ -48,6 +48,9 @@ export const CHECKS = [
   { id: "crtsh",      icon: "📜", label: "crt.sh Enhanced", desc: "CT subdomain enum" },
   { id: "cvedeep",    icon: "🔍", label: "CVE Deep Search", desc: "NVD by tech stack" },
   { id: "urlscan",    icon: "📸", label: "URLScan.io",      desc: "Screenshots & tech" },
+  { id: "shodan",     icon: "🔭", label: "Shodan",          desc: "Ports, services, CVE" },
+  { id: "censys",     icon: "🔬", label: "Censys",          desc: "Certs & services" },
+  { id: "exploitdb",  icon: "💣", label: "ExploitDB",       desc: "Public exploits" },
   { id: "diff",       icon: "±",  label: "Scan Diff",       desc: "Compare to last" },
   { id: "score",      icon: "💯", label: "Security Score",  desc: "Overall rating" },
 ];

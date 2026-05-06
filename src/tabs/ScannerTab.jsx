@@ -1107,6 +1107,105 @@ export default function ScannerTab({ proxyOnline }) {
       }
     } catch { setR("urlscan", { severity: "info", summary: "Error", lines: ["[-] URLScan failed"], recs: [] }); }
 
+    // 25. Shodan (requires API key)
+    markA("shodan");
+    try {
+      const dnsData = await dnsQ(host, "A");
+      const ip = dnsData?.Answer?.[0]?.data;
+      if (!ip) {
+        setR("shodan", { severity: "info", summary: "No IP resolved", lines: ["[-] Could not resolve IP for Shodan lookup"], recs: [] });
+      } else {
+        const shodanR = await fetch(`/api/scanner/shodan?ip=${encodeURIComponent(ip)}`).then(r => r.json());
+        if (shodanR.error) {
+          setR("shodan", { severity: "info", summary: shodanR.error.includes("API key") ? "No API key" : "Failed", lines: [`[i] ${shodanR.error}`], recs: shodanR.error.includes("API key") ? ["Add SHODAN_API_KEY to env vars"] : [] });
+        } else {
+          const dangerPorts = (shodanR.ports || []).filter(p => [21, 23, 25, 110, 143, 3306, 5432, 6379, 27017, 445, 1433].includes(p));
+          const sev = (shodanR.vulns || []).length > 0 ? "critical" : dangerPorts.length > 0 ? "high" : "info";
+          setR("shodan", {
+            severity: sev,
+            summary: `${(shodanR.ports || []).length} ports, ${(shodanR.vulns || []).length} CVEs`,
+            lines: [
+              `Shodan: ${ip} (${shodanR.org || "?"})`,
+              `[i] Location: ${shodanR.country || "?"}, ${shodanR.city || "?"}`,
+              `[i] OS: ${shodanR.os || "?"}`,
+              `[i] Hostnames: ${(shodanR.hostnames || []).join(", ") || "none"}`,
+              `[i] Ports: ${(shodanR.ports || []).join(", ") || "none"}`,
+              ...(shodanR.vulns || []).slice(0, 10).map(v => `[!!] CVE: ${v}`),
+              ...(shodanR.services || []).map(s => `[+] ${s.port}/${s.transport} — ${s.product || "?"} ${s.version || ""}`),
+            ],
+            recs: [
+              ...(shodanR.vulns || []).length > 0 ? ["Patch CVEs found by Shodan immediately"] : [],
+              ...dangerPorts.length > 0 ? ["Close dangerous ports: " + dangerPorts.join(", ")] : [],
+            ],
+          });
+          log(`[+] Shodan: ${(shodanR.ports || []).length} ports, ${(shodanR.vulns || []).length} CVEs`, (shodanR.vulns || []).length > 0 ? C.red : C.blue);
+        }
+      }
+    } catch { setR("shodan", { severity: "info", summary: "Error", lines: ["[-] Shodan failed"], recs: [] }); }
+
+    // 26. Censys (requires API key)
+    markA("censys");
+    try {
+      const censysR = await fetch(`/api/scanner/censys?query=${encodeURIComponent(host)}`).then(r => r.json());
+      if (censysR.error) {
+        setR("censys", { severity: "info", summary: censysR.error.includes("API") ? "No API key" : "Failed", lines: [`[i] ${censysR.error}`], recs: censysR.error.includes("API") ? ["Add CENSYS_API_ID and CENSYS_API_SECRET to env vars"] : [] });
+      } else {
+        const hits = censysR.hits || [];
+        setR("censys", {
+          severity: hits.length > 0 ? "info" : "low",
+          summary: `${censysR.total || 0} hosts found`,
+          lines: [
+            `Censys Search: ${host}`,
+            `[i] Total results: ${censysR.total || 0}`,
+            ...hits.slice(0, 5).map(h => [
+              `[+] ${h.ip}`,
+              ...(h.services || []).map(s => `    ${s.port}/${s.transport} — ${s.name || "?"}`),
+              h.os ? `    OS: ${h.os}` : "",
+            ].filter(Boolean)).flat(),
+          ],
+          recs: [],
+        });
+        log(`[+] Censys: ${censysR.total || 0} hosts`, C.blue);
+      }
+    } catch { setR("censys", { severity: "info", summary: "Error", lines: ["[-] Censys failed"], recs: [] }); }
+
+    // 27. ExploitDB (based on CVEs found)
+    markA("exploitdb");
+    try {
+      const cveResults = localResults["cve"] || localResults["cvedeep"];
+      const cveLines = (cveResults?.lines || []).filter(l => l.includes("CVE-"));
+      const cveIds = cveLines.map(l => l.match(/CVE-\d{4}-\d+/)?.[0]).filter(Boolean);
+      
+      if (cveIds.length === 0) {
+        setR("exploitdb", { severity: "info", summary: "No CVEs to search", lines: ["[i] ExploitDB search requires CVE findings from other checks"], recs: [] });
+        log("[i] ExploitDB: skipped (no CVEs)", C.muted);
+      } else {
+        const allExploits = [];
+        for (const cve of [...new Set(cveIds)].slice(0, 5)) {
+          try {
+            const r = await fetch(`/api/scanner/exploitdb?cve=${encodeURIComponent(cve)}`).then(r => r.json());
+            if (r.exploits && r.exploits.length > 0) {
+              r.exploits.forEach(e => allExploits.push({ ...e, cve }));
+            }
+          } catch {}
+          await new Promise(r => setTimeout(r, 300));
+        }
+        const sev = allExploits.length > 0 ? "critical" : "low";
+        setR("exploitdb", {
+          severity: sev,
+          summary: allExploits.length > 0 ? `${allExploits.length} public exploits!` : `Checked ${cveIds.length} CVEs — clean`,
+          lines: [
+            `ExploitDB Search`,
+            `[i] Searched ${[...new Set(cveIds)].length} unique CVEs`,
+            allExploits.length === 0 ? "[+] No public exploits found" : `[!!] ${allExploits.length} public exploits available:`,
+            ...allExploits.map(e => `[!!] ${e.cve}: ${e.name} — ${e.url}`),
+          ],
+          recs: allExploits.length > 0 ? ["CRITICAL: Public exploits exist — patch immediately", "Check exploit-db.com for PoC details"] : [],
+        });
+        log(`[+] ExploitDB: ${allExploits.length} exploits`, allExploits.length > 0 ? C.red : C.green);
+      }
+    } catch { setR("exploitdb", { severity: "info", summary: "Error", lines: ["[-] ExploitDB failed"], recs: [] }); }
+
     // 18. Security Scorer & Scan Diff Engine
     markA("score");
     markA("diff");
@@ -1135,7 +1234,7 @@ export default function ScannerTab({ proxyOnline }) {
 
       // Penalties (only real findings)
       Object.keys(localResults).forEach(k => {
-        if (["waf", "headers", "ssl", "email", "tech", "whois", "diff", "score", "dns", "dnsbrute", "robots", "ip", "cors", "clickjack", "crtsh", "urlscan"].includes(k)) return;
+        if (["waf", "headers", "ssl", "email", "tech", "whois", "diff", "score", "dns", "dnsbrute", "robots", "ip", "cors", "clickjack", "crtsh", "urlscan", "shodan", "censys", "exploitdb"].includes(k)) return;
         const r = localResults[k];
         if (r.severity === "critical") { scoreNum -= 30; penaltySum += 30; penaltyReasons.push(k); }
         else if (r.severity === "high") { scoreNum -= 15; penaltySum += 15; penaltyReasons.push(k); }
