@@ -41,17 +41,68 @@ export default function MinimalChat() {
       const dec = new TextDecoder();
       let assistant = '';
       setMessages(m => [...m, { role: 'assistant', content: '' }]);
+
+      // SSE parser: accumulate chunks and split by double-newline which separates events
+      let buf = '';
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        const chunk = dec.decode(value, { stream: true });
-        // naive append
-        assistant += chunk;
-        setMessages(prev => {
-          const next = [...prev];
-          next[next.length - 1] = { role: 'assistant', content: assistant };
-          return next;
-        });
+        buf += dec.decode(value, { stream: true });
+
+        let parts = buf.split('\n\n');
+        // Keep last partial part in buffer
+        buf = parts.pop();
+
+        for (const part of parts) {
+          const lines = part.split(/\r?\n/).map(l => l.trim());
+          for (const line of lines) {
+            if (!line) continue;
+            if (line.startsWith('data:')) {
+              const data = line.slice(5).trim();
+              if (data === '[DONE]') continue;
+              try {
+                const parsed = JSON.parse(data);
+                const delta = parsed.choices?.[0]?.delta;
+                const chunkText = (delta && (delta.content || delta?.text)) ? (delta.content || delta.text) : '';
+                if (chunkText) {
+                  assistant += chunkText;
+                  setMessages(prev => {
+                    const next = [...prev];
+                    next[next.length - 1] = { role: 'assistant', content: assistant };
+                    return next;
+                  });
+                }
+              } catch (e) {
+                // If not JSON, append raw data
+                assistant += data;
+                setMessages(prev => {
+                  const next = [...prev];
+                  next[next.length - 1] = { role: 'assistant', content: assistant };
+                  return next;
+                });
+              }
+            }
+          }
+        }
+      }
+      // flush any remaining buffer if it contains a final data chunk
+      if (buf) {
+        const m = buf.match(/data:\s*(.*)/s);
+        if (m && m[1]) {
+          try {
+            const parsed = JSON.parse(m[1]);
+            const delta = parsed.choices?.[0]?.delta;
+            const chunkText = (delta && (delta.content || delta?.text)) ? (delta.content || delta.text) : '';
+            if (chunkText) assistant += chunkText;
+          } catch {
+            assistant += m[1];
+          }
+          setMessages(prev => {
+            const next = [...prev];
+            next[next.length - 1] = { role: 'assistant', content: assistant };
+            return next;
+          });
+        }
       }
     } catch (err) {
       setError(err.message);
