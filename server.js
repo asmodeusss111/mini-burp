@@ -645,6 +645,96 @@ http.createServer(async (req, res) => {
       }
       return;
     }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // FILE EDITOR ENDPOINTS
+    // ═══════════════════════════════════════════════════════════════════════
+
+    // Dirs/files to hide from the file tree
+    const EDITOR_EXCLUDE = new Set([
+      "node_modules", "dist", ".git", ".cache",
+      "miniburp.db", "miniburp.db-shm", "miniburp.db-wal",
+      "package-lock.json",
+    ]);
+
+    // Helper: build recursive file tree
+    function buildFileTree(dir, relBase = "") {
+      const entries = [];
+      let names;
+      try { names = fs.readdirSync(dir).sort(); } catch { return entries; }
+
+      for (const name of names) {
+        if (EDITOR_EXCLUDE.has(name) || name.startsWith(".")) continue;
+        const abs = nodePath.join(dir, name);
+        const rel = relBase ? `${relBase}/${name}` : name;
+        let stat;
+        try { stat = fs.statSync(abs); } catch { continue; }
+
+        if (stat.isDirectory()) {
+          entries.push({ name, path: rel, type: "dir", children: buildFileTree(abs, rel) });
+        } else {
+          entries.push({ name, path: rel, type: "file", size: stat.size });
+        }
+      }
+      return entries;
+    }
+
+    // GET /api/admin/files — return the project file tree
+    if (path === "/api/admin/files" && req.method === "GET") {
+      try {
+        send(res, 200, { tree: buildFileTree(__dirname) });
+      } catch (err) {
+        send(res, 500, { error: err.message });
+      }
+      return;
+    }
+
+    // GET /api/admin/file?path=src/tabs/AdminTab.jsx — read file contents
+    if (path === "/api/admin/file" && req.method === "GET") {
+      const filePath = parsed.searchParams.get("path");
+      if (!filePath) { send(res, 400, { error: "Missing path" }); return; }
+
+      const abs = nodePath.resolve(__dirname, filePath);
+      // Path traversal guard
+      if (!abs.startsWith(__dirname + nodePath.sep) && abs !== __dirname) {
+        send(res, 403, { error: "Forbidden" }); return;
+      }
+      try {
+        const content = fs.readFileSync(abs, "utf8");
+        send(res, 200, { path: filePath, content });
+      } catch {
+        send(res, 404, { error: "File not found" });
+      }
+      return;
+    }
+
+    // PUT /api/admin/file — save file   body: { path, content }
+    if (path === "/api/admin/file" && req.method === "PUT") {
+      let payload;
+      try { payload = JSON.parse(body); } catch { send(res, 400, { error: "Invalid JSON" }); return; }
+
+      const { path: filePath, content } = payload;
+      if (!filePath || content === undefined) {
+        send(res, 400, { error: "Missing path or content" }); return;
+      }
+
+      const abs = nodePath.resolve(__dirname, filePath);
+      // Path traversal guard
+      if (!abs.startsWith(__dirname + nodePath.sep) && abs !== __dirname) {
+        send(res, 403, { error: "Forbidden" }); return;
+      }
+      // Refuse to overwrite the database
+      if (abs === nodePath.resolve(__dirname, "miniburp.db")) {
+        send(res, 403, { error: "Cannot overwrite database" }); return;
+      }
+      try {
+        fs.writeFileSync(abs, content, "utf8");
+        send(res, 200, { ok: true });
+      } catch (err) {
+        send(res, 500, { error: err.message });
+      }
+      return;
+    }
   }
   // GET /whois?domain=example.com
   if (path === "/whois") {

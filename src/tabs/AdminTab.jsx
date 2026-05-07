@@ -3,10 +3,12 @@ import { C } from "../lib/constants.js";
 import { Panel, Btn, Inp } from "../components/ui.jsx";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, BarChart, Bar, CartesianGrid } from "recharts";
 import AiChatTab from "./AiChatTab.jsx";
+import FileEditorTab from "./FileEditorTab.jsx";
 
 const ADMIN_SECTIONS = [
   { id: "dashboard", icon: "📊", label: "Dashboard" },
   { id: "ai", icon: "🤖", label: "AI Assistant" },
+  { id: "editor", icon: "📝", label: "File Editor" }
 ];
 
 export default function AdminTab() {
@@ -185,7 +187,7 @@ export default function AdminTab() {
           flexShrink: 0,
         }}>
           <h2 style={{ fontSize: 16, margin: 0 }}>
-            <span style={{ color: C.accent }}>BURP</span> {ADMIN_SECTIONS.find(s => s.id === section)?.label.toUpperCase()}
+            <span style={{ color: C.accent }}>BURP</span> {ADMIN_SECTIONS.find(s => s.id === section)?.label?.toUpperCase()}
           </h2>
           <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
             {section === "dashboard" && (
@@ -198,6 +200,9 @@ export default function AdminTab() {
 
         {/* Section content */}
         <div style={{ flex: 1, overflow: "auto" }}>
+          
+          {section === "editor" && <FileEditorTab adminPass={pass} />}
+
           {section === "ai" && (
             <AiChatTab adminPass={pass} />
           )}
