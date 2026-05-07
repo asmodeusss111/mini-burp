@@ -88,8 +88,8 @@ const MODELS = [
 ];
 
 function renderMarkdown(text) {
-  if (!text) return "";
-  let html = text;
+  if (text === undefined || text === null) return "";
+  let html = typeof text === 'string' ? text : String(text);
   // Code blocks with language
   html = html.replace(/```(\w+)?\n([\s\S]*?)```/g, (_, lang, code) => {
     const cleanCode = code.trim();
@@ -212,11 +212,10 @@ export default function AiChatTab({ adminPass }) {
         })),
       ];
 
-      const r = await fetch("/api/admin/chat", {
+      const r = await fetch("/api/chat", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "x-admin-password": adminPass,
         },
         body: JSON.stringify({
           messages: apiMessages,
@@ -398,6 +397,8 @@ export default function AiChatTab({ adminPass }) {
     document.addEventListener("click", handleGlobalClick);
     return () => document.removeEventListener("click", handleGlobalClick);
   }, []);
+
+  // no external file-send integration in this simplified chat
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", gap: 0 }}>

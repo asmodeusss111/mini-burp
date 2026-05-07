@@ -279,8 +279,8 @@ http.createServer(async (req, res) => {
 
     const analyzeServerConfig = async (reqData, resData) => {
       try {
-        const apiKey = process.env.OPENROUTER_API_KEY;
-        if (!apiKey) return "AI analysis skipped: OPENROUTER_API_KEY not configured.";
+        const apiKey = process.env.OPENROUTER_API_KEY1 || process.env.OPENROUTER_API_KEY;
+        if (!apiKey) return "AI analysis skipped: OPENROUTER_API_KEY or OPENROUTER_API_KEY1 not configured.";
 
         const sysContext = `You are an HTTP traffic analyzer for a security scanner. Analyze the provided request and response data and give a concise technical assessment: identify potential vulnerabilities, interesting headers, or security misconfigurations. Be brief and technical.`;
         const prompt = `Request:\nMethod: ${reqData.method}\nURL: ${reqData.url}\nHeaders: ${JSON.stringify(reqData.headers)}\n\nResponse:\nStatus: ${resData.status}\nHeaders: ${JSON.stringify(resData.headers)}\nBody Sample (first 500 chars): ${String(resData.body).substring(0, 500)}`;
@@ -583,12 +583,72 @@ http.createServer(async (req, res) => {
       return;
     }
 
+    // POST /api/chat — Public AI Chat proxy to OpenRouter (no admin password required)
+    if (path === "/api/chat" && req.method === "POST") {
+      let payload;
+      try { payload = JSON.parse(body); } catch { send(res, 400, { error: "Invalid JSON" }); return; }
+      const { messages: chatMessages, model: chatModel, apiKey: clientApiKey } = payload;
+      const orKey = clientApiKey || process.env.OPENROUTER_API_KEY1 || process.env.OPENROUTER_API_KEY;
+      if (!orKey) { send(res, 400, { error: "No API key provided. Set it in AI Chat settings." }); return; }
+      if (!Array.isArray(chatMessages) || chatMessages.length === 0) { send(res, 400, { error: "No messages" }); return; }
+
+      try {
+        const orResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+          method: "POST",
+          headers: {
+            "Authorization": `Bearer ${orKey}`,
+            "Content-Type": "application/json",
+            "HTTP-Referer": "https://miniburp.app",
+            "X-Title": "Mini Burp AI Assistant",
+          },
+          body: JSON.stringify({
+            model: chatModel || "google/gemma-3-27b-it:free",
+            messages: chatMessages,
+            max_tokens: 4096,
+            stream: true,
+          }),
+        });
+
+        if (!orResponse.ok) {
+          const errText = await orResponse.text();
+          send(res, 200, { error: `OpenRouter API error ${orResponse.status}: ${errText}` });
+          return;
+        }
+
+        res.writeHead(200, {
+          "Content-Type": "text/event-stream",
+          "Cache-Control": "no-cache",
+          "Connection": "keep-alive",
+          "Access-Control-Allow-Origin": "*",
+        });
+
+        const reader = orResponse.body.getReader();
+        const decoder = new TextDecoder();
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          res.write(chunk);
+        }
+
+        res.end();
+      } catch (err) {
+        if (!res.headersSent) {
+          send(res, 200, { error: `Request failed: ${err.message}` });
+        } else {
+          res.end();
+        }
+      }
+      return;
+    }
+
     // POST /api/admin/chat — AI Chat proxy to OpenRouter
     if (path === "/api/admin/chat" && req.method === "POST") {
       let payload;
       try { payload = JSON.parse(body); } catch { send(res, 400, { error: "Invalid JSON" }); return; }
       const { messages: chatMessages, model: chatModel, apiKey: clientApiKey } = payload;
-      const orKey = clientApiKey || process.env.OPENROUTER_API_KEY;
+      const orKey = clientApiKey || process.env.OPENROUTER_API_KEY1 || process.env.OPENROUTER_API_KEY;
       if (!orKey) { send(res, 400, { error: "No API key provided. Set it in AI Chat settings." }); return; }
       if (!Array.isArray(chatMessages) || chatMessages.length === 0) { send(res, 400, { error: "No messages" }); return; }
 
@@ -642,6 +702,18 @@ http.createServer(async (req, res) => {
         } else {
           res.end();
         }
+      }
+      return;
+    }
+
+    // GET /api/admin/ai-key — returns whether server has OPENROUTER_API_KEY or OPENROUTER_API_KEY1 configured
+    if (path === "/api/admin/ai-key" && req.method === "GET") {
+      try {
+        const present = !!(process.env.OPENROUTER_API_KEY1 || process.env.OPENROUTER_API_KEY);
+        const which = process.env.OPENROUTER_API_KEY1 ? 'OPENROUTER_API_KEY1' : (process.env.OPENROUTER_API_KEY ? 'OPENROUTER_API_KEY' : null);
+        send(res, 200, { present, which });
+      } catch (err) {
+        send(res, 500, { error: err.message });
       }
       return;
     }
