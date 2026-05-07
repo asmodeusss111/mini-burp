@@ -1089,12 +1089,22 @@ export default function ScannerTab({ proxyOnline }) {
         log("[i] CVE Deep: skipped (no tech)", C.muted);
       } else {
         const allCves = [];
-        for (const t of rawTechs) {
-          const query = t.ver ? `${t.n} ${t.ver}` : t.n;
+        // Only search techs WITH version — without version returns ancient irrelevant CVEs
+        const techsWithVer = rawTechs.filter(t => t.ver);
+        const techsWithoutVer = rawTechs.filter(t => !t.ver);
+        
+        for (const t of techsWithVer) {
+          const query = `${t.n} ${t.ver}`;
           try {
             const r = await fetch(`/api/scanner/cve?query=${encodeURIComponent(query)}`).then(r => r.json());
             if (r.cves) {
-              r.cves.forEach(cve => allCves.push({ ...cve, tech: t.n, ver: t.ver }));
+              // Filter: only CVEs from 2018+ and score >= 5
+              r.cves
+                .filter(cve => {
+                  const year = parseInt(cve.published?.slice(0, 4) || "0");
+                  return year >= 2018 && cve.score >= 5;
+                })
+                .forEach(cve => allCves.push({ ...cve, tech: t.n, ver: t.ver }));
             }
           } catch {}
           await new Promise(r => setTimeout(r, 800)); // NVD rate limit
@@ -1104,13 +1114,14 @@ export default function ScannerTab({ proxyOnline }) {
         const sev = critCves.length > 0 ? "critical" : highCves.length > 0 ? "high" : allCves.length > 0 ? "medium" : "low";
         setR("cvedeep", {
           severity: sev,
-          summary: `${allCves.length} CVEs found (${critCves.length}C/${highCves.length}H)`,
+          summary: allCves.length > 0 ? `${allCves.length} CVEs (${critCves.length}C/${highCves.length}H)` : `${techsWithVer.length} techs checked — clean`,
           lines: [
             `CVE Deep Search (NVD)`,
-            `[i] Searched for: ${rawTechs.map(t => t.n).join(", ")}`,
-            `[i] Total CVEs: ${allCves.length}`,
+            `[i] Searched: ${techsWithVer.map(t => `${t.n} v${t.ver}`).join(", ") || "none with version"}`,
+            techsWithoutVer.length > 0 ? `[i] Skipped (no version): ${techsWithoutVer.map(t => t.n).join(", ")}` : "",
+            `[i] Total relevant CVEs: ${allCves.length}`,
             ...allCves.slice(0, 15).map(c =>
-              `[${c.score >= 9 ? "!!" : c.score >= 7 ? "!" : "i"}] ${c.id} (${c.severity}, ${c.score}) — ${c.tech}${c.ver ? ` v${c.ver}` : ""}`
+              `[${c.score >= 9 ? "!!" : c.score >= 7 ? "!" : "i"}] ${c.id} (${c.severity}, ${c.score}) — ${c.tech} v${c.ver}`
             ),
             allCves.length > 15 ? `[i] ...+${allCves.length - 15} more` : "",
             ...allCves.slice(0, 3).map(c => `    ${c.description?.slice(0, 100)}...`),
