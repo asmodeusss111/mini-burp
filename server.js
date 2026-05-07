@@ -510,6 +510,66 @@ http.createServer(async (req, res) => {
   const adminPass = process.env.ADMIN_PASSWORD || "secret";
   const checkAdmin = (req) => req.headers["x-admin-password"] === adminPass;
 
+  // Public: POST /api/chat — Public AI Chat proxy to OpenRouter (no admin password required)
+  if (path === "/api/chat" && req.method === "POST") {
+    let payload;
+    try { payload = JSON.parse(body); } catch { send(res, 400, { error: "Invalid JSON" }); return; }
+    const { messages: chatMessages, model: chatModel, apiKey: clientApiKey } = payload;
+    const orKey = clientApiKey || process.env.OPENROUTER_API_KEY1 || process.env.OPENROUTER_API_KEY;
+    if (!orKey) { send(res, 400, { error: "No API key provided. Set it in AI Chat settings or server env." }); return; }
+    if (!Array.isArray(chatMessages) || chatMessages.length === 0) { send(res, 400, { error: "No messages" }); return; }
+
+    try {
+      const orResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${orKey}`,
+          "Content-Type": "application/json",
+          "HTTP-Referer": "https://miniburp.app",
+          "X-Title": "Mini Burp AI Assistant",
+        },
+        body: JSON.stringify({
+          model: chatModel || "google/gemma-3-27b-it:free",
+          messages: chatMessages,
+          max_tokens: 4096,
+          stream: true,
+        }),
+      });
+
+      if (!orResponse.ok) {
+        const errText = await orResponse.text();
+        send(res, 200, { error: `OpenRouter API error ${orResponse.status}: ${errText}` });
+        return;
+      }
+
+      res.writeHead(200, {
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "Access-Control-Allow-Origin": "*",
+      });
+
+      const reader = orResponse.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const chunk = decoder.decode(value, { stream: true });
+        res.write(chunk);
+      }
+
+      res.end();
+    } catch (err) {
+      if (!res.headersSent) {
+        send(res, 200, { error: `Request failed: ${err.message}` });
+      } else {
+        res.end();
+      }
+    }
+    return;
+  }
+
   if (path.startsWith("/api/admin")) {
     if (!checkAdmin(req)) {
       send(res, 401, { error: "Unauthorized" });
