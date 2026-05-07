@@ -999,6 +999,18 @@ http.createServer(async (req, res) => {
     return;
   }
 
+  // Public: GET /api/ai-key — returns whether server has OPENROUTER_API_KEY or OPENROUTER_API_KEY1 configured
+  if (path === "/api/ai-key" && req.method === "GET") {
+    try {
+      const present = !!(process.env.OPENROUTER_API_KEY1 || process.env.OPENROUTER_API_KEY);
+      const which = process.env.OPENROUTER_API_KEY1 ? 'OPENROUTER_API_KEY1' : (process.env.OPENROUTER_API_KEY ? 'OPENROUTER_API_KEY' : null);
+      send(res, 200, { present, which });
+    } catch (err) {
+      send(res, 500, { error: err.message });
+    }
+    return;
+  }
+
   // 3.5. POST /api/scanner/jaeles — Active CVE vulnerability scanner (Jaeles-style)
   if (path === "/api/scanner/jaeles" && req.method === "POST") {
     let payload;

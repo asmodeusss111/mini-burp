@@ -76,7 +76,7 @@ export default function AIHelper() {
           title="AI Assistant"
           onClick={async () => {
             try {
-              const r = await fetch('/api/admin/ai-key');
+              const r = await fetch('/api/ai-key');
               if (!r.ok) throw new Error('check failed');
               const j = await r.json();
               if (j.present) {
