@@ -519,28 +519,45 @@ http.createServer(async (req, res) => {
     if (!orKey) { send(res, 400, { error: "No API key provided. Set it in AI Chat settings or server env." }); return; }
     if (!Array.isArray(chatMessages) || chatMessages.length === 0) { send(res, 400, { error: "No messages" }); return; }
 
-    try {
-      const orResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
-        method: "POST",
-        headers: {
+      let endpoint = "https://openrouter.ai/api/v1/chat/completions";
+      let actualModel = chatModel || "openrouter/auto";
+
+      if (orKey.startsWith("sk-or-")) {
+        endpoint = "https://openrouter.ai/api/v1/chat/completions";
+      } else if (orKey.startsWith("sk-proj-") || (orKey.startsWith("sk-") && orKey.length >= 50)) {
+        endpoint = "https://api.openai.com/v1/chat/completions";
+        actualModel = "gpt-4o-mini";
+      } else if (orKey.startsWith("sk-")) {
+        endpoint = "https://api.deepseek.com/chat/completions";
+        actualModel = "deepseek-chat";
+      }
+
+      try {
+        const fetchHeaders = {
           "Authorization": `Bearer ${orKey}`,
           "Content-Type": "application/json",
-          "HTTP-Referer": "https://miniburp.app",
-          "X-Title": "Mini Burp AI Assistant",
-        },
-        body: JSON.stringify({
-          model: chatModel || "google/gemma-3-27b-it:free",
-          messages: chatMessages,
-          max_tokens: 4096,
-          stream: true,
-        }),
-      });
+        };
+        if (endpoint.includes("openrouter.ai")) {
+          fetchHeaders["HTTP-Referer"] = "https://miniburp.app";
+          fetchHeaders["X-Title"] = "Mini Burp AI Assistant";
+        }
 
-      if (!orResponse.ok) {
-        const errText = await orResponse.text();
-        send(res, 200, { error: `OpenRouter API error ${orResponse.status}: ${errText}` });
-        return;
-      }
+        const orResponse = await fetch(endpoint, {
+          method: "POST",
+          headers: fetchHeaders,
+          body: JSON.stringify({
+            model: actualModel,
+            messages: chatMessages,
+            max_tokens: 4096,
+            stream: true,
+          }),
+        });
+
+        if (!orResponse.ok) {
+          const errText = await orResponse.text();
+          send(res, 200, { error: `API error ${orResponse.status}: ${errText}` });
+          return;
+        }
 
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
@@ -712,26 +729,43 @@ http.createServer(async (req, res) => {
       if (!orKey) { send(res, 400, { error: "No API key provided. Set it in AI Chat settings." }); return; }
       if (!Array.isArray(chatMessages) || chatMessages.length === 0) { send(res, 400, { error: "No messages" }); return; }
 
+      let endpoint = "https://openrouter.ai/api/v1/chat/completions";
+      let actualModel = chatModel || "openrouter/auto";
+
+      if (orKey.startsWith("sk-or-")) {
+        endpoint = "https://openrouter.ai/api/v1/chat/completions";
+      } else if (orKey.startsWith("sk-proj-") || (orKey.startsWith("sk-") && orKey.length >= 50)) {
+        endpoint = "https://api.openai.com/v1/chat/completions";
+        actualModel = "gpt-4o-mini";
+      } else if (orKey.startsWith("sk-")) {
+        endpoint = "https://api.deepseek.com/chat/completions";
+        actualModel = "deepseek-chat";
+      }
+
       try {
-        const orResponse = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        const fetchHeaders = {
+          "Authorization": `Bearer ${orKey}`,
+          "Content-Type": "application/json",
+        };
+        if (endpoint.includes("openrouter.ai")) {
+          fetchHeaders["HTTP-Referer"] = "https://miniburp.app";
+          fetchHeaders["X-Title"] = "Mini Burp AI Assistant";
+        }
+
+        const orResponse = await fetch(endpoint, {
           method: "POST",
-          headers: {
-            "Authorization": `Bearer ${orKey}`,
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://miniburp.app",
-            "X-Title": "Mini Burp AI Assistant",
-          },
+          headers: fetchHeaders,
           body: JSON.stringify({
-            model: chatModel || "google/gemma-3-27b-it:free",
+            model: actualModel,
             messages: chatMessages,
             max_tokens: 4096,
-            stream: true, // Enable streaming
+            stream: true,
           }),
         });
 
         if (!orResponse.ok) {
           const errText = await orResponse.text();
-          send(res, 200, { error: `OpenRouter API error ${orResponse.status}: ${errText}` });
+          send(res, 200, { error: `API error ${orResponse.status}: ${errText}` });
           return;
         }
 
