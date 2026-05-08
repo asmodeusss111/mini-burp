@@ -152,10 +152,12 @@ export default function AiChatTab({ adminPass }) {
   const [model, setModel] = useState(MODELS[0].id);
   const [mode, setMode] = useState("security");
   const [apiKey, setApiKey] = useState(localStorage.getItem("openrouter_key") || "");
-  const [showSettings, setShowSettings] = useState(!localStorage.getItem("openrouter_key"));
+  const [showSettings, setShowSettings] = useState(false);
   const [error, setError] = useState("");
   const [tokenCount, setTokenCount] = useState(0);
   const [scanTarget, setScanTarget] = useState("");
+  const [customPrompt, setCustomPrompt] = useState(localStorage.getItem("ai_custom_prompt") || "");
+  const [showPromptEditor, setShowPromptEditor] = useState(false);
   const chatEndRef = useRef(null);
   const inputRef = useRef(null);
 
@@ -175,6 +177,10 @@ export default function AiChatTab({ adminPass }) {
   }, [chatHistories]);
 
   useEffect(() => {
+    localStorage.setItem("ai_custom_prompt", customPrompt);
+  }, [customPrompt]);
+
+  useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
 
@@ -189,11 +195,7 @@ export default function AiChatTab({ adminPass }) {
   const sendMessage = async (overrideText, isRegenerate) => {
     const text = overrideText || input.trim();
     if (!text || loading) return;
-    if (!apiKey) {
-      setError("Сначала введи OpenRouter API ключ в настройках");
-      setShowSettings(true);
-      return;
-    }
+    // apiKey is optional — server uses OPENROUTER_API_KEY from env as fallback
 
     const userMsg = { role: "user", content: text };
     const newMessages = isRegenerate ? [...messages, userMsg] : [...messages, userMsg];
@@ -205,7 +207,7 @@ export default function AiChatTab({ adminPass }) {
     try {
       // Build conversation history for API (skip the welcome message)
       const apiMessages = [
-        { role: "system", content: SYSTEM_PROMPTS[mode] },
+        { role: "system", content: customPrompt.trim() || SYSTEM_PROMPTS[mode] },
         ...newMessages.filter((m, i) => i > 0 || m.role === "user").map(m => ({
           role: m.role,
           content: m.content,
@@ -617,6 +619,7 @@ export default function AiChatTab({ adminPass }) {
             ))}
           </select>
 
+          <Btn onClick={() => setShowPromptEditor(!showPromptEditor)} small style={customPrompt.trim() ? { background: `${C.accent}20`, borderColor: C.accent } : {}}>📝</Btn>
           <Btn onClick={() => setShowSettings(!showSettings)} small>⚙</Btn>
           <Btn onClick={clearChat} small color={C.red}>🗑</Btn>
         </div>
@@ -663,6 +666,57 @@ export default function AiChatTab({ adminPass }) {
           >
             Получить ключ →
           </a>
+        </div>
+      )}
+
+      {/* Custom system prompt editor */}
+      {showPromptEditor && (
+        <div style={{
+          padding: "12px 14px",
+          background: C.panel,
+          borderBottom: `1px solid ${C.border}`,
+          flexShrink: 0,
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+            <span style={{ fontFamily: "monospace", fontSize: 11, color: C.muted }}>
+              📝 System Prompt {customPrompt.trim() ? <span style={{ color: C.accent }}>(custom active)</span> : <span>(default: {mode})</span>}
+            </span>
+            {customPrompt.trim() && (
+              <button
+                onClick={() => setCustomPrompt("")}
+                style={{
+                  background: "transparent",
+                  border: `1px solid ${C.border}`,
+                  color: C.muted,
+                  padding: "2px 8px",
+                  borderRadius: 4,
+                  fontSize: 10,
+                  fontFamily: "monospace",
+                  cursor: "pointer",
+                }}
+              >Reset to default</button>
+            )}
+          </div>
+          <textarea
+            value={customPrompt}
+            onChange={e => setCustomPrompt(e.target.value)}
+            placeholder={`Напиши свой system prompt...\n(если пусто — используется ${mode} по умолчанию)`}
+            rows={4}
+            style={{
+              width: "100%",
+              background: C.bg,
+              border: `1px solid ${C.border}`,
+              borderRadius: 6,
+              color: C.text,
+              fontFamily: "monospace",
+              fontSize: 11,
+              padding: "8px 10px",
+              outline: "none",
+              resize: "vertical",
+              lineHeight: 1.5,
+              boxSizing: "border-box",
+            }}
+          />
         </div>
       )}
 
