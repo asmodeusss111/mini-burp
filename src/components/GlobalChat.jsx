@@ -179,7 +179,6 @@ export default function GlobalChat({ apiKey, onClose }) {
         /* toolbar */
         .gc-toolbar { display: flex; align-items: center; gap: 6px; padding: 0 8px; height: 40px; background: #0a0e13; border-bottom: 1px solid ${C.border}; flex-shrink: 0; }
         .gc-title { font-size: 12px; font-weight: 700; color: ${C.text}; flex: 1; }
-        .gc-model-select { background: ${C.bg}; border: 1px solid ${C.border}; color: ${C.text}; padding: 3px 6px; border-radius: 4px; font-size: 11px; font-family: monospace; outline: none; cursor: pointer; max-width: 170px; }
         .gc-tb-btn { background: transparent; border: 1px solid ${C.border}40; color: ${C.muted}; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-family: monospace; cursor: pointer; transition: all .15s; white-space: nowrap; }
         .gc-tb-btn:hover { color: ${C.accent}; border-color: ${C.accent}; }
 
@@ -231,15 +230,6 @@ export default function GlobalChat({ apiKey, onClose }) {
         {/* ── toolbar ── */}
         <div className="gc-toolbar">
           <span className="gc-title">🤖 AI Chat</span>
-          <select
-            className="gc-model-select"
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-          >
-            {MODELS.map((m) => (
-              <option key={m.id} value={m.id}>{m.label}</option>
-            ))}
-          </select>
           <button
             className="gc-tb-btn"
             onClick={() => setShowSys((v) => !v)}
