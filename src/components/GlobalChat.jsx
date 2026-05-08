@@ -36,31 +36,19 @@ function renderMd(text) {
   return h;
 }
 
-const MODELS = [
-  { id: "google/gemini-2.0-flash-001",       label: "💎 Gemini 2.0 Flash" },
-  { id: "anthropic/claude-3.5-haiku",         label: "💎 Claude 3.5 Haiku" },
-  { id: "deepseek/deepseek-chat-v3-0324",     label: "💎 DeepSeek V3" },
-  { id: "openai/gpt-4o-mini",                 label: "💎 GPT-4o Mini" },
-  { id: "openrouter/free",                    label: "🆓 Auto (Free)" },
-  { id: "google/gemma-4-31b-it:free",         label: "🆓 Gemma 4 31B" },
-  { id: "openai/gpt-oss-120b:free",           label: "🆓 GPT-OSS 120B" },
-  { id: "nvidia/nemotron-3-super-120b-a12b:free", label: "🆓 Nemotron 120B" },
-];
 
 const DEFAULT_SYSTEM = "You are a helpful assistant. Answer concisely and accurately. Use markdown for code and structured content.";
 const STORAGE_KEY = "gc_messages";
 const STORAGE_SYS = "gc_system_prompt";
-const STORAGE_MDL = "gc_model";
 
 // ── component ─────────────────────────────────────────────────────────────────
-export default function GlobalChat({ apiKey, onClose }) {
+export default function GlobalChat({ apiKey, model }) {
   const [messages, setMessages] = useState(() => {
     try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { return []; }
   });
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const [model, setModel] = useState(localStorage.getItem(STORAGE_MDL) || MODELS[0].id);
+  const [error, setError]     = useState("");
   const [systemPrompt, setSystemPrompt] = useState(localStorage.getItem(STORAGE_SYS) || "");
   const [showSys, setShowSys] = useState(false);
   const [tokenCount, setTokenCount] = useState(0);
@@ -72,7 +60,6 @@ export default function GlobalChat({ apiKey, onClose }) {
   }, [messages]);
 
   useEffect(() => { localStorage.setItem(STORAGE_SYS, systemPrompt); }, [systemPrompt]);
-  useEffect(() => { localStorage.setItem(STORAGE_MDL, model); }, [model]);
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
 
   // copy buttons in rendered markdown
@@ -277,7 +264,7 @@ export default function GlobalChat({ apiKey, onClose }) {
           {messages.map((msg, i) => (
             <div key={i} className={msg.role === "user" ? "gc-msg-user" : "gc-msg-ai"}>
               <div className="gc-msg-role">
-                {msg.role === "user" ? "👤 Ты" : `🤖 AI · ${MODELS.find((m) => m.id === model)?.label || model}`}
+                {msg.role === "user" ? "👤 Ты" : "🤖 AI"}
               </div>
               <div
                 className="gc-msg-body"

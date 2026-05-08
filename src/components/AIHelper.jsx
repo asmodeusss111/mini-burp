@@ -2,10 +2,24 @@ import { useState, useEffect, useRef } from "react";
 import GlobalChat from "./GlobalChat.jsx";
 import { C } from "../lib/constants.js";
 
+const MODELS = [
+  { id: "google/gemini-2.0-flash-001",            label: "💎 Gemini 2.0 Flash" },
+  { id: "anthropic/claude-3.5-haiku",              label: "💎 Claude 3.5 Haiku" },
+  { id: "deepseek/deepseek-chat-v3-0324",          label: "💎 DeepSeek V3" },
+  { id: "openai/gpt-4o-mini",                      label: "💎 GPT-4o Mini" },
+  { id: "openrouter/free",                         label: "🆓 Auto (Free)" },
+  { id: "google/gemma-4-31b-it:free",              label: "🆓 Gemma 4 31B" },
+  { id: "openai/gpt-oss-120b:free",                label: "🆓 GPT-OSS 120B" },
+  { id: "nvidia/nemotron-3-super-120b-a12b:free",  label: "🆓 Nemotron 120B" },
+];
+
 export default function AIHelper() {
   const [open, setOpen]         = useState(false);
-  const [position, setPosition] = useState("bottom"); // "bottom" | "top"
+  const [position, setPosition] = useState("bottom");
   const [size, setSize]         = useState({ w: 520, h: 640 });
+  const [model, setModel]       = useState(localStorage.getItem("gc_model") || MODELS[0].id);
+
+  const saveModel = (id) => { setModel(id); localStorage.setItem("gc_model", id); };
 
   // API key state — read from localStorage, editable here
   const [apiKey, setApiKey]         = useState(localStorage.getItem("openrouter_key") || "");
@@ -137,6 +151,17 @@ export default function AIHelper() {
           {/* panel header */}
           <div className="ai-ph">
             <span className="ai-ph-title">🤖 AI Chat</span>
+            <select
+              value={model}
+              onChange={(e) => saveModel(e.target.value)}
+              style={{
+                background: C.bg, border: `1px solid ${C.border}`, color: C.text,
+                fontFamily: "monospace", fontSize: 10, padding: "2px 6px",
+                borderRadius: 4, outline: "none", cursor: "pointer", maxWidth: 160,
+              }}
+            >
+              {MODELS.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+            </select>
             <button
               className="ai-ph-btn"
               onClick={() => setShowKeyInput((v) => !v)}
@@ -208,7 +233,7 @@ export default function AIHelper() {
 
           {/* Chat */}
           <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-            <GlobalChat apiKey={apiKey} />
+            <GlobalChat apiKey={apiKey} model={model} />
           </div>
         </div>
       )}
