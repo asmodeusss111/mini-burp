@@ -7,6 +7,17 @@ export default function AIHelper() {
   const [position, setPosition] = useState("bottom"); // "bottom" | "top"
   const [size, setSize] = useState({ w: 560, h: 620 });
   const [keyError, setKeyError] = useState("");
+  const [showKeyInput, setShowKeyInput] = useState(false);
+  const [apiKeyDraft, setApiKeyDraft] = useState(localStorage.getItem("openrouter_key") || "");
+  const keySet = Boolean(localStorage.getItem("openrouter_key"));
+
+  const saveKey = () => {
+    const trimmed = apiKeyDraft.trim();
+    if (trimmed) {
+      localStorage.setItem("openrouter_key", trimmed);
+      setShowKeyInput(false);
+    }
+  };
 
   // Keyboard shortcut Ctrl+Alt+I
   useEffect(() => {
@@ -183,25 +194,63 @@ export default function AIHelper() {
             <span className="ai-toolbar-label">🤖 AI Assistant</span>
             <button
               className="ai-toolbar-btn"
-              title="Toggle position top/bottom"
-              onClick={() => setPosition(p => p === "bottom" ? "top" : "bottom")}
+              onClick={() => setShowKeyInput(v => !v)}
+              style={keySet ? { color: C.green, borderColor: C.green + "60" } : { color: C.yellow, borderColor: C.yellow + "60" }}
+              title="OpenRouter API key"
             >
-              {position === "bottom" ? "⬆ Move Up" : "⬇ Move Down"}
+              {keySet ? "🔑 Key ✓" : "🔑 Set Key"}
             </button>
             <button
               className="ai-toolbar-btn"
-              onClick={() => setSize({ w: 480, h: 600 })}
+              title="Toggle position top/bottom"
+              onClick={() => setPosition(p => p === "bottom" ? "top" : "bottom")}
             >
-              ⊡ Reset size
+              {position === "bottom" ? "⬆" : "⬇"}
+            </button>
+            <button
+              className="ai-toolbar-btn"
+              onClick={() => setSize({ w: 560, h: 620 })}
+            >
+              ⊡
             </button>
             <button
               className="ai-toolbar-btn"
               onClick={() => setOpen(false)}
               style={{ color: C.red, borderColor: C.red + "60" }}
             >
-              ✕ Close
+              ✕
             </button>
           </div>
+
+          {/* API Key input row */}
+          {showKeyInput && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: 8,
+              padding: "8px 10px", background: C.bg,
+              borderBottom: `1px solid ${C.border}`, flexShrink: 0,
+            }}>
+              <span style={{ fontFamily: "monospace", fontSize: 11, color: C.muted, whiteSpace: "nowrap" }}>🔑 OpenRouter Key:</span>
+              <input
+                type="password"
+                value={apiKeyDraft}
+                onChange={e => setApiKeyDraft(e.target.value)}
+                onKeyDown={e => e.key === "Enter" && saveKey()}
+                placeholder="sk-or-..."
+                style={{
+                  flex: 1, background: C.panel, border: `1px solid ${C.border}`,
+                  borderRadius: 4, color: C.text, fontFamily: "monospace",
+                  fontSize: 11, padding: "5px 8px", outline: "none",
+                }}
+              />
+              <button className="ai-toolbar-btn" onClick={saveKey} style={{ color: C.green, borderColor: C.green + "60" }}>Save</button>
+              {keySet && (
+                <button className="ai-toolbar-btn" onClick={() => { localStorage.removeItem("openrouter_key"); setApiKeyDraft(""); }}
+                  style={{ color: C.red, borderColor: C.red + "40" }}>Clear</button>
+              )}
+              <a href="https://openrouter.ai/keys" target="_blank" rel="noopener"
+                style={{ color: C.blue, fontSize: 10, fontFamily: "monospace", whiteSpace: "nowrap" }}>Get key →</a>
+            </div>
+          )}
 
           {/* Full AiChatTab */}
           <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
