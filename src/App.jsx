@@ -9,7 +9,7 @@ import InterceptorTab from "./tabs/InterceptorTab.jsx";
 import DecoderTab from "./tabs/DecoderTab.jsx";
 import HistoryTab from "./tabs/HistoryTab.jsx";
 import AdminTab from "./tabs/AdminTab.jsx";
-import AIHelper from "./components/AIHelper.jsx";
+
 
 const TABS = [
   { id: "scanner",     label: "Scanner",     icon: "⚡" },
@@ -125,7 +125,7 @@ export default function App() {
           own sites only
         </span>
       </div>
-      <AIHelper />
+
     </div>
   );
 }
